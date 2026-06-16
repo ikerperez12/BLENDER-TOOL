@@ -88,12 +88,13 @@ class FirstRunWizard(QDialog):
 
         self.ffmpeg_status_lbl = QLabel()
         self.ffmpeg_status_lbl.setFixedWidth(24)
-        self._update_ffmpeg_status(detected_ffmpeg)
 
         self.ffmpeg_install_btn = QPushButton("📦 Instalar con winget")
         self.ffmpeg_install_btn.setToolTip("Ejecuta: winget install Gyan.FFmpeg (sin permisos de admin)")
         self.ffmpeg_install_btn.setFixedWidth(170)
         self.ffmpeg_install_btn.clicked.connect(self._install_ffmpeg_winget)
+
+        self._update_ffmpeg_status(detected_ffmpeg)
 
         ffmpeg_layout = QHBoxLayout()
         ffmpeg_layout.addWidget(self.ffmpeg_status_lbl)
