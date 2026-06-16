@@ -287,8 +287,8 @@ class BlenderRunner(QObject):
                     if not line_str:
                         continue
                     
-                    # Log service backup
-                    log_service.info(line_str, self.project_code)
+                    # Log service backup commented out to avoid UI console flooding (raw output goes to log_file instead)
+                    # log_service.info(line_str, self.project_code)
                     
                     # Check if line is an IPBT_EVENT
                     if line_str.startswith("IPBT_EVENT "):

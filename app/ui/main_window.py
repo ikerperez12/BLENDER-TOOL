@@ -726,8 +726,11 @@ class MainWindow(QMainWindow):
         # Queue Table
         self.queue_table = QTableWidget(0, 5)
         self.queue_table.setHorizontalHeaderLabels(["Proyecto", "Cámara / Trabajo", "Perfil", "Resolución", "Estado"])
-        self.queue_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.queue_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self.queue_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents) # Proyecto
+        self.queue_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)          # Cámara / Trabajo
+        self.queue_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents) # Perfil
+        self.queue_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents) # Resolución
+        self.queue_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents) # Estado
         self.queue_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.queue_table.setAlternatingRowColors(True)
         queue_layout.addWidget(self.queue_table)
@@ -1404,8 +1407,8 @@ class MainWindow(QMainWindow):
 
     @Slot(int, str)
     def on_job_log(self, job_id, line):
-        # We also feed individual job lines to our text area
-        pass
+        # Feed clean, filtered event log lines to our console text area
+        self.append_log_to_console(line)
 
     @Slot(int, str, str)
     def on_job_finished(self, job_id, status, output_file):
