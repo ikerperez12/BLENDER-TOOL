@@ -1,6 +1,6 @@
 import os
 import datetime
-from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtCore import Qt, Signal, Slot, QTimer
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QFrame, QCheckBox, QComboBox, QTableWidget, QTableWidgetItem,
@@ -445,6 +445,12 @@ class MainWindow(QMainWindow):
         
         # Check first run status on startup
         self.check_first_run_status()
+        
+        # Setup stats update timer (RAM, Disk, Queue remaining)
+        self.stats_timer = QTimer(self)
+        self.stats_timer.timeout.connect(self.update_system_stats)
+        self.stats_timer.start(2000) # update every 2 seconds
+        self.update_system_stats()
 
     def setup_ui(self):
         central = QWidget()
@@ -627,6 +633,25 @@ class MainWindow(QMainWindow):
         cam_title.setObjectName("sectionTitle")
         self.cam_layout.addWidget(cam_title)
         
+        # Select All / Deselect All layout
+        select_layout = QHBoxLayout()
+        select_layout.setContentsMargins(0, 0, 0, 0)
+        self.select_all_btn = QPushButton("☑ Todas")
+        self.deselect_all_btn = QPushButton("☐ Ninguna")
+        
+        # Small buttons style
+        btn_style = "font-size: 11px; padding: 2px 8px; max-height: 22px;"
+        self.select_all_btn.setStyleSheet(btn_style)
+        self.deselect_all_btn.setStyleSheet(btn_style)
+        
+        self.select_all_btn.clicked.connect(self.select_all_cameras)
+        self.deselect_all_btn.clicked.connect(self.deselect_all_cameras)
+        
+        select_layout.addWidget(self.select_all_btn)
+        select_layout.addWidget(self.deselect_all_btn)
+        select_layout.addStretch()
+        self.cam_layout.addLayout(select_layout)
+        
         self.cam_scroll_widget = QWidget()
         self.cam_scroll_layout = QVBoxLayout(self.cam_scroll_widget)
         self.cam_scroll_layout.setContentsMargins(0, 0, 0, 0)
@@ -726,13 +751,20 @@ class MainWindow(QMainWindow):
         # Queue Table
         self.queue_table = QTableWidget(0, 5)
         self.queue_table.setHorizontalHeaderLabels(["Proyecto", "Cámara / Trabajo", "Perfil", "Resolución", "Estado"])
-        self.queue_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents) # Proyecto
-        self.queue_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)          # Cámara / Trabajo
-        self.queue_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents) # Perfil
-        self.queue_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents) # Resolución
-        self.queue_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents) # Estado
+        
+        # Enable manual interactive resize mode so the user can drag-resize any column
+        self.queue_table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.queue_table.setColumnWidth(0, 75)   # Proyecto
+        self.queue_table.setColumnWidth(1, 200)  # Cámara / Trabajo
+        self.queue_table.setColumnWidth(2, 85)   # Perfil
+        self.queue_table.setColumnWidth(3, 85)   # Resolución
+        self.queue_table.setColumnWidth(4, 95)   # Estado
         self.queue_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.queue_table.setAlternatingRowColors(True)
+        # Custom keyPressEvent override and context menu connectivity
+        self.queue_table.keyPressEvent = self.on_queue_table_key_press
+        self.queue_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.queue_table.customContextMenuRequested.connect(self.show_queue_context_menu)
         queue_layout.addWidget(self.queue_table)
         
         # Progress Bar
@@ -788,6 +820,7 @@ class MainWindow(QMainWindow):
         # Connect settings change
         self.completion_action_combo.currentTextChanged.connect(self.on_completion_action_changed)
         action_layout.addWidget(self.completion_action_combo)
+        
         action_layout.addStretch()
         queue_layout.addLayout(action_layout)
         
@@ -838,6 +871,18 @@ class MainWindow(QMainWindow):
         # Set initial splitter sizes
         main_splitter.setSizes([320, 630])
         main_layout.addWidget(main_splitter)
+        
+        # Initialize Status Bar
+        self.status_bar = self.statusBar()
+        self.status_bar.setStyleSheet("background-color: #1e1e24; border-top: 1px solid #2d2d34; color: #e4e4e7;")
+        
+        self.status_msg_lbl = QLabel("Cola de renderizado: Detenida")
+        self.status_msg_lbl.setStyleSheet("color: #a1a1aa; font-size: 12px; padding-left: 5px;")
+        self.status_bar.addWidget(self.status_msg_lbl)
+        
+        self.system_stats_lbl = QLabel("")
+        self.system_stats_lbl.setStyleSheet("color: #0da2ff; font-family: Consolas, monospace; font-size: 12px; padding-right: 10px;")
+        self.status_bar.addPermanentWidget(self.system_stats_lbl)
 
     def load_settings(self):
         """Loads non-dialog configuration variables to the widgets."""
@@ -1254,11 +1299,12 @@ class MainWindow(QMainWindow):
             if main_cb.isChecked():
                 # Fetch metadata snapshot details
                 cursor.execute("SELECT * FROM snapshots WHERE id = ?", (snapshot_id,))
-                snapshot = cursor.fetchone()
+                snapshot_row = cursor.fetchone()
+                snapshot = dict(snapshot_row) if snapshot_row else {}
                 
                 # Check for framing
-                frame_start = snapshot["frame_start"]
-                frame_end = snapshot["frame_end"]
+                frame_start = snapshot.get("frame_start", 1)
+                frame_end = snapshot.get("frame_end", 1)
                 
                 # If montage is checked but it's a still, it will render PNG first, then run update_compositor script.
                 # If it's an animation, it will render PNG frames, then compile MP4.
@@ -1329,7 +1375,110 @@ class MainWindow(QMainWindow):
     def pause_render_queue(self):
         self.queue_thread.pause_queue()
 
+    def select_all_cameras(self):
+        for cam_name, blend_path, snapshot_id, main_cb, montage_cb, is_animation in self.camera_checkboxes:
+            main_cb.setChecked(True)
+
+    def deselect_all_cameras(self):
+        for cam_name, blend_path, snapshot_id, main_cb, montage_cb, is_animation in self.camera_checkboxes:
+            main_cb.setChecked(False)
+
+    def on_queue_table_key_press(self, event):
+        if event.key() == Qt.Key_Delete:
+            self.delete_selected_jobs()
+        else:
+            QTableWidget.keyPressEvent(self.queue_table, event)
+
+    def show_queue_context_menu(self, pos):
+        item = self.queue_table.itemAt(pos)
+        if not item:
+            return
+            
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+        
+        reset_action = menu.addAction("🔄 Reiniciar a Pendiente")
+        reset_action.triggered.connect(self.reset_selected_jobs_to_pending)
+        
+        delete_action = menu.addAction("🗑 Quitar de la cola")
+        delete_action.triggered.connect(self.delete_selected_jobs)
+        
+        menu.exec(self.queue_table.viewport().mapToGlobal(pos))
+
+    def reset_selected_jobs_to_pending(self):
+        selected_ranges = self.queue_table.selectedRanges()
+        if not selected_ranges:
+            return
+            
+        job_ids = []
+        for r in selected_ranges:
+            for row in range(r.topRow(), r.bottomRow() + 1):
+                item = self.queue_table.item(row, 0)
+                if item:
+                    job_id = item.data(Qt.UserRole)
+                    if job_id:
+                        job_ids.append(job_id)
+                        
+        if not job_ids:
+            return
+            
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        placeholders = ",".join("?" for _ in job_ids)
+        cursor.execute(f"UPDATE jobs SET status = 'Pending', retry_count = 0 WHERE id IN ({placeholders}) AND status != 'Running'", job_ids)
+        conn.commit()
+        conn.close()
+        
+        self.refresh_queue_table()
+        self.update_system_stats()
+
+    def delete_selected_jobs(self):
+        selected_ranges = self.queue_table.selectedRanges()
+        if not selected_ranges:
+            return
+            
+        # Collect job IDs to delete
+        job_ids = []
+        for r in selected_ranges:
+            for row in range(r.topRow(), r.bottomRow() + 1):
+                item = self.queue_table.item(row, 0)
+                if item:
+                    job_id = item.data(Qt.UserRole)
+                    if job_id:
+                        job_ids.append(job_id)
+                        
+        if not job_ids:
+            return
+            
+        # Confirm deletion
+        reply = QMessageBox.question(
+            self, "Quitar trabajos",
+            f"¿Estás seguro de que deseas quitar los {len(job_ids)} trabajos seleccionados de la cola?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            placeholders = ",".join("?" for _ in job_ids)
+            
+            # Check if any of selected jobs are Running
+            cursor.execute(f"SELECT COUNT(*) FROM jobs WHERE id IN ({placeholders}) AND status = 'Running'", job_ids)
+            running_count = cursor.fetchone()[0]
+            if running_count > 0:
+                QMessageBox.warning(self, "Trabajo en ejecución", "No puedes eliminar un trabajo que se está ejecutando. Por favor, cancélalo primero.")
+                conn.close()
+                return
+                
+            cursor.execute(f"DELETE FROM jobs WHERE id IN ({placeholders})", job_ids)
+            conn.commit()
+            conn.close()
+            
+            self.refresh_queue_table()
+            self.update_system_stats()
+
     def cancel_current_job(self):
+        # Pause the queue first to prevent it from automatically starting the next job
+        self.queue_thread.pause_queue()
         self.queue_thread.cancel_current_job()
 
     def clear_queue(self):
@@ -1389,21 +1538,25 @@ class MainWindow(QMainWindow):
         self.queue_progress.setFormat(f"{label}: %p%")
         self._current_label = label
         
+        self.status_msg_lbl.setText(f"🚀 Renderizando: {label}")
+        self.status_msg_lbl.setStyleSheet("color: #10b981; font-weight: bold; font-size: 12px; padding-left: 5px;")
+        
         # Reset and hide stats label until stats arrive
         self.render_stats_lbl.setText("")
         self.render_stats_lbl.setVisible(False)
 
     @Slot(int, int)
     def on_job_progress(self, job_id, percent):
+        label = getattr(self, "_current_label", "Trabajo")
         if percent == -1:
             self.queue_progress.setRange(0, 0)
-            label = getattr(self, "_current_label", "Trabajo")
             self.queue_progress.setFormat(f"{label}: Procesando...")
+            self.status_msg_lbl.setText(f"🚀 Renderizando: {label} (Preparando...)")
         else:
             self.queue_progress.setRange(0, 100)
             self.queue_progress.setValue(percent)
-            label = getattr(self, "_current_label", "Trabajo")
             self.queue_progress.setFormat(f"{label}: %p%")
+            self.status_msg_lbl.setText(f"🚀 Renderizando: {label} ({percent}%)")
 
     @Slot(int, str)
     def on_job_log(self, job_id, line):
@@ -1415,6 +1568,15 @@ class MainWindow(QMainWindow):
         self.queue_progress.setVisible(False)
         self.render_stats_lbl.setVisible(False)
         self.refresh_queue_table()
+        if status == "Completed":
+            self.status_msg_lbl.setText("✅ Último render finalizado con éxito.")
+            self.status_msg_lbl.setStyleSheet("color: #10b981; font-size: 12px; padding-left: 5px;")
+        elif status == "Cancelled":
+            self.status_msg_lbl.setText("🛑 Último render cancelado por el usuario.")
+            self.status_msg_lbl.setStyleSheet("color: #f59e0b; font-size: 12px; padding-left: 5px;")
+        else: # Failed
+            self.status_msg_lbl.setText("❌ Último render fallido.")
+            self.status_msg_lbl.setStyleSheet("color: #ef4444; font-size: 12px; padding-left: 5px;")
 
     @Slot(int, dict)
     def on_job_stats(self, job_id, stats):
@@ -1438,18 +1600,24 @@ class MainWindow(QMainWindow):
             self.pause_btn.setEnabled(True)
             self.cancel_btn.setEnabled(True)
             self.clear_queue_btn.setEnabled(False)
+            self.status_msg_lbl.setText("🚀 Cola de renderizado: Ejecutándose...")
+            self.status_msg_lbl.setStyleSheet("color: #10b981; font-weight: bold; font-size: 12px; padding-left: 5px;")
         elif state == "Paused":
             self.start_btn.setEnabled(True)
             self.start_btn.setText("▶ Reanudar Cola")
             self.pause_btn.setEnabled(False)
             self.cancel_btn.setEnabled(True)  # Habilitar cancelación durante pausa
             self.clear_queue_btn.setEnabled(True)
+            self.status_msg_lbl.setText("⏸ Cola de renderizado: Pausada")
+            self.status_msg_lbl.setStyleSheet("color: #f59e0b; font-weight: bold; font-size: 12px; padding-left: 5px;")
         else: # Stopped
             self.start_btn.setEnabled(True)
             self.start_btn.setText("▶ Iniciar Cola")
             self.pause_btn.setEnabled(False)
             self.cancel_btn.setEnabled(False)
             self.clear_queue_btn.setEnabled(True)
+            self.status_msg_lbl.setText("🛑 Cola de renderizado: Detenida")
+            self.status_msg_lbl.setStyleSheet("color: #ef4444; font-weight: bold; font-size: 12px; padding-left: 5px;")
 
     def check_first_run_status(self):
         from app.core.settings_service import get_setting_bool
@@ -1488,6 +1656,69 @@ class MainWindow(QMainWindow):
             if wizard.exec() == QDialog.Accepted:
                 self.check_first_run_status()
                 self.load_settings()
+
+    def update_system_stats(self):
+        """Updates the general stats: RAM, Disk, and remaining queue tasks."""
+        try:
+            # 1. Fetch detailed queue task counts
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT status, COUNT(*) FROM jobs GROUP BY status")
+            counts = {row[0]: row[1] for row in cursor.fetchall()}
+            conn.close()
+            
+            pending = counts.get("Pending", 0)
+            running = counts.get("Running", 0)
+            completed = counts.get("Completed", 0)
+            failed = counts.get("Failed", 0)
+            total = pending + running + completed + failed
+            
+            # 2. Fetch system RAM usage
+            import psutil
+            ram = psutil.virtual_memory()
+            ram_used = ram.used / (1024**3)
+            ram_total = ram.total / (1024**3)
+            
+            # 3. Fetch disk free space
+            import shutil
+            from app.core.settings_service import get_setting
+            target_dir = get_setting("base_dir")
+            if self.scanned_project_id:
+                conn = get_db_connection()
+                row = conn.execute("SELECT output_path FROM projects WHERE id = ?", (self.scanned_project_id,)).fetchone()
+                conn.close()
+                if row and row[0]:
+                    target_dir = row[0]
+            
+            # Ensure the directory exists or walk up to find a valid parent drive
+            check_dir = target_dir
+            while check_dir and not os.path.exists(check_dir):
+                parent_dir = os.path.dirname(check_dir)
+                if parent_dir == check_dir:
+                    break
+                check_dir = parent_dir
+                
+            disk_str = "N/D"
+            if check_dir and os.path.exists(check_dir):
+                try:
+                    total_bytes, used_bytes, free_bytes = shutil.disk_usage(check_dir)
+                    free_gb = free_bytes / (1024**3)
+                    disk_str = f"{free_gb:.1f} GB"
+                except Exception:
+                    pass
+            
+            # Format status text
+            # Tareas: X/Y completadas | Z en cola | RAM: A/B GB (C%) | Disco: D
+            stats_text = f"Tareas: {completed}/{total} completadas | {pending} en cola"
+            if failed > 0:
+                stats_text += f" ({failed} fallidas)"
+            if running > 0:
+                stats_text += f" [{running} activas]"
+                
+            stats_text += f"   |   RAM: {ram_used:.1f}/{ram_total:.1f} GB ({ram.percent}%)   |   Disco libre: {disk_str}"
+            self.system_stats_lbl.setText(stats_text)
+        except Exception:
+            pass
 
     def closeEvent(self, event):
         """Safely shuts down background thread on close."""

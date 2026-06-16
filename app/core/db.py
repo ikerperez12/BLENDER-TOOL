@@ -155,6 +155,9 @@ def init_db():
     )
     """)
     
+    # Reset any stuck 'Running' jobs from a previous interrupted session to 'Pending'
+    cursor.execute("UPDATE jobs SET status = 'Pending' WHERE status = 'Running'")
+    
     conn.commit()
     conn.close()
 

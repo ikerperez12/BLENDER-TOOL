@@ -49,51 +49,63 @@ class BlenderRunner(QObject):
         pid = self.process.pid
         log_service.info(f"Cancelando proceso y matando árbol de procesos de PID {pid}...", self.project_code)
         
+        # 1. On Windows, taskkill /F /T is extremely fast, reliable, and handles suspended processes perfectly
+        if os.name == 'nt':
+            try:
+                result = subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(pid)],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True
+                )
+                log_service.info(f"Árbol de procesos {pid} terminado usando taskkill (code {result.returncode}).", self.project_code)
+                return
+            except Exception as e:
+                log_service.warning(f"Error al ejecutar taskkill: {e}. Probando método fallback psutil...", self.project_code)
+
+        # 2. Cross-platform / fallback method using psutil
         try:
             parent = psutil.Process(pid)
-            children = parent.children(recursive=True)
-            
-            # Terminate children first
+            # Gather children safely
+            try:
+                children = parent.children(recursive=True)
+            except Exception:
+                children = []
+                
+            # Kill children first (stops suspended/paused processes on Windows/Linux)
             for child in children:
                 try:
-                    child.terminate()
-                except psutil.NoSuchProcess:
+                    child.kill()
+                except Exception:
                     pass
             
-            # Terminate parent
+            # Kill parent
             try:
-                parent.terminate()
-            except psutil.NoSuchProcess:
+                parent.kill()
+            except Exception:
                 pass
                 
-            # Wait for them to exit
-            gone, alive = psutil.wait_procs(children + [parent], timeout=3)
+            # Wait briefly
+            gone, alive = psutil.wait_procs(children + [parent], timeout=1)
             
             # Force kill any survivors
             for proc in alive:
                 try:
                     proc.kill()
-                except psutil.NoSuchProcess:
+                except Exception:
                     pass
                     
-            log_service.info("Árbol de procesos terminado con éxito.", self.project_code)
+            log_service.info("Árbol de procesos terminado con psutil.", self.project_code)
         except Exception as e:
-            log_service.error(f"Error al matar el árbol de procesos: {e}", self.project_code)
-            # Windows fallback
-            try:
-                subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            except Exception:
-                pass
+            log_service.error(f"Error al matar el árbol de procesos con psutil: {e}", self.project_code)
 
     def cancel(self):
         """Triggers process cancellation."""
         self.is_cancelled = True
         if self.process:
-            # If suspended, resume first so it responds to signals/termination
+            # If suspended, resume first so it responds to signals/termination (best effort, though taskkill handles suspended)
             try:
                 self.resume()
-                import time
-                time.sleep(0.5) # Esperar un instante
             except Exception:
                 pass
             self.kill_process_tree()
@@ -106,15 +118,22 @@ class BlenderRunner(QObject):
         log_service.info(f"Suspendiendo proceso de PID {pid}...", self.project_code)
         try:
             parent = psutil.Process(pid)
-            for child in parent.children(recursive=True):
-                try:
-                    child.suspend()
-                except psutil.NoSuchProcess:
-                    pass
+            # Suspend children first
+            try:
+                for child in parent.children(recursive=True):
+                    try:
+                        child.suspend()
+                    except Exception as ex:
+                        log_service.warning(f"No se pudo suspender el proceso hijo {child.pid}: {ex}", self.project_code)
+            except Exception as ex:
+                log_service.warning(f"Error al listar hijos para suspender: {ex}", self.project_code)
+                
+            # Suspend parent
             try:
                 parent.suspend()
-            except psutil.NoSuchProcess:
-                pass
+            except Exception as ex:
+                log_service.warning(f"No se pudo suspender el proceso padre {pid}: {ex}", self.project_code)
+                
             self.log_received.emit(">>> RENDERIZADO PAUSADO (Recursos liberados) <<<")
         except Exception as e:
             log_service.error(f"Error al suspender el proceso: {e}", self.project_code)
@@ -127,15 +146,22 @@ class BlenderRunner(QObject):
         log_service.info(f"Reanudando proceso de PID {pid}...", self.project_code)
         try:
             parent = psutil.Process(pid)
+            # Resume parent first
             try:
                 parent.resume()
-            except psutil.NoSuchProcess:
-                pass
-            for child in parent.children(recursive=True):
-                try:
-                    child.resume()
-                except psutil.NoSuchProcess:
-                    pass
+            except Exception as ex:
+                log_service.warning(f"No se pudo reanudar el proceso padre {pid}: {ex}", self.project_code)
+                
+            # Resume children
+            try:
+                for child in parent.children(recursive=True):
+                    try:
+                        child.resume()
+                    except Exception as ex:
+                        log_service.warning(f"No se pudo reanudar el proceso hijo {child.pid}: {ex}", self.project_code)
+            except Exception as ex:
+                log_service.warning(f"Error al listar hijos para reanudar: {ex}", self.project_code)
+                
             self.log_received.emit(">>> RENDERIZADO REANUDADO <<<")
         except Exception as e:
             log_service.error(f"Error al reanudar el proceso: {e}", self.project_code)
@@ -153,6 +179,16 @@ class BlenderRunner(QObject):
             "render_camera.py"
         )
 
+        # Map profile to English choices accepted by blender script
+        prof_map = {
+            "borrador": "Draft",
+            "draft": "Draft",
+            "cliente": "Client",
+            "client": "Client",
+            "final": "Final"
+        }
+        profile_eng = prof_map.get(profile.lower(), "Client")
+
         args = [
             blender_bin,
             "-b", blend_path,
@@ -161,7 +197,7 @@ class BlenderRunner(QObject):
             "--",
             "--camera", camera_name,
             "--output", output_path,
-            "--profile", profile,
+            "--profile", profile_eng,
             "--res-pct", str(res_pct),
             "--device", device,
             "--frame-start", str(frame),
@@ -187,6 +223,16 @@ class BlenderRunner(QObject):
             "render_camera.py"
         )
 
+        # Map profile to English choices accepted by blender script
+        prof_map = {
+            "borrador": "Draft",
+            "draft": "Draft",
+            "cliente": "Client",
+            "client": "Client",
+            "final": "Final"
+        }
+        profile_eng = prof_map.get(profile.lower(), "Client")
+
         args = [
             blender_bin,
             "-b", blend_path,
@@ -195,7 +241,7 @@ class BlenderRunner(QObject):
             "--",
             "--camera", camera_name,
             "--output", output_path,
-            "--profile", profile,
+            "--profile", profile_eng,
             "--res-pct", str(res_pct),
             "--device", device,
             "--frame-start", str(frame_start),
@@ -406,8 +452,11 @@ class BlenderRunner(QObject):
                 self.finished.emit(0, "")
                 
         except Exception as e:
-            log_service.error(f"Excepción al ejecutar Blender: {e}", self.project_code)
-            self.finished.emit(-1, str(e))
+            if self.is_cancelled:
+                self.finished.emit(-2, "Operación cancelada por el usuario.")
+            else:
+                log_service.error(f"Excepción al ejecutar Blender: {e}", self.project_code)
+                self.finished.emit(-1, str(e))
         finally:
             self.process = None
 

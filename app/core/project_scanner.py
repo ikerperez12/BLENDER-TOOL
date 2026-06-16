@@ -9,13 +9,16 @@ from app.core.settings_service import get_setting, get_base_dir
 import app.core.log_service as log_service
 
 def sanitize_folder_name(name):
-    """Sanitizes folder/camera names safely for Windows filesystems."""
+    """Sanitizes folder/camera names safely for Windows filesystems, preserving spaces."""
+    if not name:
+        return "unnamed"
     name = name.strip()
-    # Replace characters not allowed in file names
+    # Replace characters not allowed in Windows file names: < > : " / \ | ? *
     name = re.sub(r'[<>:"/\\|?*]+', "_", name)
-    name = re.sub(r'\s+', "_", name)
-    # Allow alphanumeric, underscores, hyphens, and dots
-    name = re.sub(r'[^\w\-\.]+', "_", name, flags=re.UNICODE)
+    # Allow alphanumeric, underscores, hyphens, spaces, and dots
+    name = re.sub(r'[^\w\-\.\s]+', "_", name, flags=re.UNICODE)
+    # Collapse multiple spaces
+    name = re.sub(r'\s+', " ", name)
     name = name.strip("._ ")
     
     if not name:

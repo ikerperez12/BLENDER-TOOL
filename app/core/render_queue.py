@@ -101,7 +101,8 @@ class RenderQueue(QThread):
         """)
         row = cursor.fetchone()
         conn.close()
-        return row
+        return dict(row) if row else None
+
 
     def _update_job_status(self, job_id, status, error_summary=None, output_file=None, start_time=None, finish_time=None, duration=None, log_file=None):
         conn = get_db_connection()
@@ -151,9 +152,15 @@ class RenderQueue(QThread):
         posibles_carpetas = [cam_id, f"Camara {cam_id}", camera_name, safe_cam]
         carpeta_destino = safe_cam
         for pc in posibles_carpetas:
+            # 1. Check preserving spaces
             safe_pc = sanitize_folder_name(pc)
             if os.path.isdir(os.path.join(output_root, safe_pc)):
                 carpeta_destino = safe_pc
+                break
+            # 2. Check replacing spaces with underscores
+            safe_pc_under = safe_pc.replace(" ", "_")
+            if os.path.isdir(os.path.join(output_root, safe_pc_under)):
+                carpeta_destino = safe_pc_under
                 break
                 
         cam_dir = os.path.abspath(os.path.join(output_root, carpeta_destino))
@@ -163,9 +170,19 @@ class RenderQueue(QThread):
             
         os.makedirs(cam_dir, exist_ok=True)
         
+        # Map profile to English internally for format extension selection
+        prof_map = {
+            "borrador": "Draft",
+            "draft": "Draft",
+            "cliente": "Client",
+            "client": "Client",
+            "final": "Final"
+        }
+        profile_eng = prof_map.get(profile.lower(), "Client")
+        
         # Determine format extension
         ext = "png"
-        if profile == "Draft":
+        if profile_eng == "Draft":
             ext = "jpg"
             
         # 2. Find next version index depending on naming style
@@ -226,13 +243,44 @@ class RenderQueue(QThread):
         job_id = job["id"]
         project_code = job["project_code"]
         camera_name = job["camera_name"] or "Camera"
+        
+        start_time_raw = datetime.datetime.now()
+        start_time_str = start_time_raw.strftime("%Y-%m-%d %H:%M:%S")
+        
+        try:
+            self._process_job_impl(job, start_time_raw, start_time_str)
+        except Exception as e:
+            import traceback
+            finish_time_raw = datetime.datetime.now()
+            finish_time_str = finish_time_raw.strftime("%Y-%m-%d %H:%M:%S")
+            duration = (finish_time_raw - start_time_raw).total_seconds()
+            err_msg = f"Excepción grave en cola de renderizado: {e}\n{traceback.format_exc()}"
+            log_service.error(err_msg, project_code)
+            
+            # Check if user cancelled
+            is_cancelled = False
+            if hasattr(self, "current_runner") and self.current_runner and getattr(self.current_runner, "is_cancelled", False):
+                is_cancelled = True
+                
+            self.current_runner = None
+            
+            if is_cancelled:
+                self._update_job_status(job_id, "Cancelled", error_summary="Cancelado por el usuario", finish_time=finish_time_str)
+                self.job_finished.emit(job_id, "Cancelled", "")
+                log_service.warning(f"Trabajo [{job_id}] CANCELADO por excepción de cancelación.", project_code)
+            else:
+                self._update_job_status(job_id, "Failed", error_summary=str(e), finish_time=finish_time_str, duration=duration)
+                self.job_finished.emit(job_id, "Failed", "")
+
+    def _process_job_impl(self, job, start_time_raw, start_time_str):
+        job_id = job["id"]
+        project_code = job["project_code"]
+        camera_name = job["camera_name"] or "Camera"
         job_type = job["job_type"]
         
         label = f"{project_code} - {camera_name} ({job['profile']})"
         log_service.info(f"Iniciando trabajo [{job_id}]: {label}", project_code)
         
-        start_time_raw = datetime.datetime.now()
-        start_time_str = start_time_raw.strftime("%Y-%m-%d %H:%M:%S")
         self._update_job_status(job_id, "Running", start_time=start_time_str)
         self.job_started.emit(job_id, label)
         
@@ -287,6 +335,11 @@ class RenderQueue(QThread):
         while self_retcode is None:
             self.msleep(100)
             
+        # Capture if the job was cancelled by user
+        is_cancelled = (self_retcode == -2)
+        if self.current_runner and self.current_runner.is_cancelled:
+            is_cancelled = True
+
         # Clean up runner reference
         self.current_runner = None
         
@@ -295,7 +348,7 @@ class RenderQueue(QThread):
         finish_time_str = finish_time_raw.strftime("%Y-%m-%d %H:%M:%S")
         duration = (finish_time_raw - start_time_raw).total_seconds()
         
-        if self_retcode == 0:
+        if self_retcode == 0 and not is_cancelled:
             # Render succeeded!
             if job_type == "SINGLE_CAMERA_ANIMATION" and job.get("include_postprocessing", 1) == 0:
                 final_output_file = os.path.dirname(render_path)
@@ -306,7 +359,8 @@ class RenderQueue(QThread):
             # A. If it was a Still frame and has Montage configured
             # Look up if the snapshot has a montage path
             conn = get_db_connection()
-            snapshot = conn.execute("SELECT * FROM snapshots WHERE id = ?", (job["snapshot_id"],)).fetchone()
+            snapshot_row = conn.execute("SELECT * FROM snapshots WHERE id = ?", (job["snapshot_id"],)).fetchone()
+            snapshot = dict(snapshot_row) if snapshot_row else None
             conn.close()
             
             montage_blend = ""
@@ -433,7 +487,7 @@ class RenderQueue(QThread):
             
         else:
             # Render failed or cancelled
-            if self_retcode == -2:
+            if self_retcode == -2 or is_cancelled:
                 # Cancelled by user
                 self._update_job_status(job_id, "Cancelled", error_summary="Cancelado por el usuario", finish_time=finish_time_str)
                 self.job_finished.emit(job_id, "Cancelled", "")

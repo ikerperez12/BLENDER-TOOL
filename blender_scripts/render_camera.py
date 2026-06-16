@@ -34,8 +34,8 @@ def on_render_write(scene):
     emit_event("frame_done", phase="render", frame=frame_idx, total_frames=total, output=scene.render.filepath)
 
 @bpy.app.handlers.persistent
-def on_render_stats(scene):
-    stats_str = scene.render.stats
+def on_render_stats(stats_str):
+    # stats_str is passed directly as a string parameter by Blender
     
     # 1. Standard progress_update for Cycles samples
     m = re.search(r"Sample\s+(\d+)\s*/\s*(\d+)", stats_str)
