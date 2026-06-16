@@ -165,8 +165,8 @@ def scan_project(identifier, mode="IP_LEGACY", custom_output_dir=None):
             
         # Find blend files
         blend_files = []
-        3d_dirs = glob.glob(os.path.join(proj_dir, "*_3D_BLENDER*"))
-        if not 3d_dirs:
+        dirs_3d = glob.glob(os.path.join(proj_dir, "*_3D_BLENDER*"))
+        if not dirs_3d:
             # Fallback to recursively listing all .blend files in the project folder
             for root, dirs, files in os.walk(proj_dir):
                 depth = root[len(proj_dir):].count(os.sep)
@@ -176,7 +176,7 @@ def scan_project(identifier, mode="IP_LEGACY", custom_output_dir=None):
                     if f.endswith(".blend") and not f.startswith("."):
                         blend_files.append(os.path.join(root, f))
         else:
-            for d in 3d_dirs:
+            for d in dirs_3d:
                 for f in os.listdir(d):
                     if f.endswith(".blend") and not f.startswith("."):
                         blend_files.append(os.path.join(d, f))

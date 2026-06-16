@@ -1,4 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_submodules
 
 block_cipher = None
 
@@ -9,21 +10,10 @@ a = Analysis(
     datas=[
         ('blender_scripts', 'blender_scripts'),
     ],
-    hiddenimports=[
+    hiddenimports=collect_submodules('app') + [
         'psutil',
         'requests',
         'sqlite3',
-        'app.core.db',
-        'app.core.settings_service',
-        'app.core.log_service',
-        'app.core.project_scanner',
-        'app.core.blender_runner',
-        'app.core.ffmpeg_runner',
-        'app.core.notification_service',
-        'app.core.render_queue',
-        'app.core.diagnostics',
-        'app.ui.theme',
-        'app.ui.main_window',
     ],
     hookspath=[],
     hooksconfig={},

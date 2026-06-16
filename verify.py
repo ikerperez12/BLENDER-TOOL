@@ -33,6 +33,28 @@ except ImportError as e:
     print(f"  FAILED: requests import error: {e}")
     sys.exit(1)
 
+# Verify app submodules imports
+app_modules = [
+    "app.core.db",
+    "app.core.settings_service",
+    "app.core.log_service",
+    "app.core.project_scanner",
+    "app.core.blender_runner",
+    "app.core.ffmpeg_runner",
+    "app.core.notification_service",
+    "app.core.render_queue",
+    "app.core.diagnostics",
+    "app.ui.theme",
+    "app.ui.main_window",
+]
+for module in app_modules:
+    try:
+        __import__(module)
+        print(f"  SUCCESS: {module} imported successfully.")
+    except ImportError as e:
+        print(f"  FAILED: {module} import error: {e}")
+        sys.exit(1)
+
 # 2. Check Database init
 print("\n[2/4] Verifying database configuration...")
 try:

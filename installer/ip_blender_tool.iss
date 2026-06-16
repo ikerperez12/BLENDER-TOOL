@@ -2,7 +2,7 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 
 #define MyAppName "IP Blender Tool"
-#define MyAppVersion "1.0.0-rc1"
+#define MyAppVersion "1.0.0-rc2"
 #define MyAppPublisher "Iker Pérez"
 #define MyAppExeName "IPBlenderTool.exe"
 

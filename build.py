@@ -4,7 +4,7 @@ import sys
 import shutil
 import hashlib
 
-VERSION = "1.0.0-rc1"
+VERSION = "1.0.0-rc2"
 
 def find_iscc():
     """Tries to find the Inno Setup compiler (ISCC.exe)."""
