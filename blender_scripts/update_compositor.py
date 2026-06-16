@@ -5,15 +5,23 @@ import os
 import time
 import json
 
+# Global args to reference inside handlers
+render_args = None
+
 def emit_event(event_type, **payload):
     payload["type"] = event_type
     payload["timestamp"] = time.time()
+    if render_args and hasattr(render_args, "job_id") and render_args.job_id:
+        try:
+            payload["job_id"] = int(render_args.job_id)
+        except ValueError:
+            payload["job_id"] = render_args.job_id
     print("IPBT_EVENT " + json.dumps(payload, ensure_ascii=False), flush=True)
 
-# Notify launch immediately when python script starts executing
-emit_event("job_started", phase="launch", message="Blender iniciado para montaje")
+
 
 def parse_args():
+    global render_args
     if "--" in sys.argv:
         args_list = sys.argv[sys.argv.index("--") + 1:]
     else:
@@ -22,12 +30,15 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Update compositor nodes with a render image and render final montage.")
     parser.add_argument("--img-path", type=str, required=True, help="Path to the source PNG image render.")
     parser.add_argument("--output", type=str, required=True, help="Path to save the resulting montage JPEG.")
+    parser.add_argument("--job-id", type=str, default="", help="Job ID associated with this render.")
     
-    return parser.parse_args(args_list)
+    parsed = parser.parse_args(args_list)
+    render_args = parsed
+    return parsed
 
 def update_and_render():
     args = parse_args()
-    
+    emit_event("job_started", phase="launch", message="Blender iniciado para montaje")
     emit_event("blend_loaded", phase="load", message=f"Archivo de montaje cargado: {os.path.basename(bpy.data.filepath)}")
     emit_event("compositor_started", phase="prepare", message="Iniciando reemplazo de imagen en nodos...")
     

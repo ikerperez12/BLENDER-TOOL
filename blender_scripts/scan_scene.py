@@ -4,9 +4,34 @@ import os
 import sys
 import time
 
+# Parse job_id if passed
+job_id = "scan"
+if "--" in sys.argv:
+    try:
+        args_list = sys.argv[sys.argv.index("--") + 1:]
+        if "--job-id" in args_list:
+            idx = args_list.index("--job-id")
+            if idx + 1 < len(args_list):
+                job_id = args_list[idx + 1]
+    except ValueError:
+        pass
+else:
+    try:
+        if "--job-id" in sys.argv:
+            idx = sys.argv.index("--job-id")
+            if idx + 1 < len(sys.argv):
+                job_id = sys.argv[idx + 1]
+    except ValueError:
+        pass
+
 def emit_event(event_type, **payload):
     payload["type"] = event_type
     payload["timestamp"] = time.time()
+    if job_id:
+        try:
+            payload["job_id"] = int(job_id)
+        except ValueError:
+            payload["job_id"] = job_id
     print("IPBT_EVENT " + json.dumps(payload, ensure_ascii=False), flush=True)
 
 def scan():

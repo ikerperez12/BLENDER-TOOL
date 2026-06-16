@@ -72,3 +72,14 @@ Cualquier fallo en los siguientes puntos bloquea de forma inmediata e incondicio
   - Validar que los perfiles y rutas anteriores se mantienen intactos.
   - Abrir la cola y verificar que el historial de base de datos se conserva y migró correctamente (añadiendo la nueva columna `blend_path`).
   - La aplicación inicia directamente sin volver a forzar el asistente de configuración inicial de manera innecesaria.
+
+### 7. Control de Procesos, Estadísticas y UI (Pausa/Reanudar/Cancelar y Checkboxes)
+- [ ] **Pausar Render**: Iniciar un renderizado de Blender, hacer clic en "Pausa" y comprobar en el Administrador de Tareas que el uso de CPU/GPU de todos los procesos `blender.exe` del árbol de trabajo cae a cero.
+- [ ] **Reanudar Render**: Hacer clic en "Reanudar" y verificar que el proceso `blender.exe` continúa renderizando y el progreso progresa.
+- [ ] **Cancelar estando Pausado**: Con el render pausado, hacer clic en "Cancelar Actual". Verificar que el proceso se reanuda internamente un instante y luego se cierra por completo, sin dejar procesos `blender.exe` huérfanos.
+- [ ] **Advertencia de VRAM**: Validar que al pasar el cursor sobre el botón "Pausa" se muestra el aviso de que pausar el proceso mantiene ocupada la GPU/VRAM.
+- [ ] **Visualización de Estadísticas**: Validar que la etiqueta de estadísticas bajo la barra de progreso muestra la memoria, los tiles, las muestras y el tiempo restante de forma legible.
+- [ ] **Estadísticas no Disponibles**: Forzar un render o situación donde no haya datos de telemetría disponibles y validar que la etiqueta muestra "Estadísticas no disponibles" o se oculta adecuadamente.
+- [ ] **Checkboxes en .exe Compilado**: Instalar la aplicación compilada, ingresar a las listas de cámaras y validar que las casillas (checkboxes) se pueden marcar/desmarcar con clics interactivos, mostrando el indicador de check de forma clara (color azul con checkmark blanco y borde brillante).
+- [ ] **Ausencia de Procesos Blender Huérfanos**: Asegurarse de que al terminar o abortar la cola no queden procesos `blender.exe` residuales.
+

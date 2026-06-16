@@ -9,6 +9,7 @@ a = Analysis(
     binaries=[],
     datas=[
         ('blender_scripts', 'blender_scripts'),
+        ('app/ui/resources', 'app/ui/resources'),
     ],
     hiddenimports=collect_submodules('app') + [
         'psutil',

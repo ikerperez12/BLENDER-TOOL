@@ -72,10 +72,26 @@ def init_db():
         resolution_percent INTEGER,
         render_engine TEXT,
         scan_warnings TEXT,
+        frame_start INTEGER DEFAULT 1,
+        frame_end INTEGER DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (project_id) REFERENCES projects(id)
     )
     """)
+    
+    # Run migration for existing databases for snapshots.frame_start
+    try:
+        cursor.execute("ALTER TABLE snapshots ADD COLUMN frame_start INTEGER DEFAULT 1")
+    except sqlite3.OperationalError:
+        # Column already exists
+        pass
+
+    # Run migration for existing databases for snapshots.frame_end
+    try:
+        cursor.execute("ALTER TABLE snapshots ADD COLUMN frame_end INTEGER DEFAULT 1")
+    except sqlite3.OperationalError:
+        # Column already exists
+        pass
     
     # 3. Jobs table
     cursor.execute("""
@@ -103,6 +119,7 @@ def init_db():
         output_file TEXT,
         error_summary TEXT,
         log_file TEXT,
+        include_postprocessing INTEGER DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (project_id) REFERENCES projects(id),
         FOREIGN KEY (snapshot_id) REFERENCES snapshots(id)
@@ -119,6 +136,13 @@ def init_db():
     # Run migration for existing databases for jobs.log_file
     try:
         cursor.execute("ALTER TABLE jobs ADD COLUMN log_file TEXT")
+    except sqlite3.OperationalError:
+        # Column already exists
+        pass
+        
+    # Run migration for existing databases for jobs.include_postprocessing
+    try:
+        cursor.execute("ALTER TABLE jobs ADD COLUMN include_postprocessing INTEGER DEFAULT 1")
     except sqlite3.OperationalError:
         # Column already exists
         pass

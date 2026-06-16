@@ -18,6 +18,7 @@ class RenderQueue(QThread):
     job_log = Signal(int, str)      # job_id, log_line
     job_finished = Signal(int, str, str) # job_id, status (Completed/Failed), output_file
     queue_state_changed = Signal(str) # Running, Paused, Stopped
+    job_stats = Signal(int, dict)   # job_id, stats (memory, tiles, samples, remaining)
 
     def __init__(self):
         super().__init__()
@@ -57,15 +58,20 @@ class RenderQueue(QThread):
 
     def start_queue(self):
         if self.state != "Running":
+            was_paused = (self.state == "Paused")
             self.state = "Running"
             self.queue_state_changed.emit("Running")
             log_service.info("Cola de renderizado INICIADA.")
+            if was_paused and self.current_runner:
+                self.current_runner.resume()
 
     def pause_queue(self):
         if self.state == "Running":
             self.state = "Paused"
             self.queue_state_changed.emit("Paused")
             log_service.info("Cola de renderizado PAUSADA.")
+            if self.current_runner:
+                self.current_runner.pause()
 
     def stop_queue(self):
         self.state = "Stopped"
@@ -240,6 +246,7 @@ class RenderQueue(QThread):
         # Connect runner logs and progress to queue signals
         self.current_runner.log_received.connect(lambda line: self.job_log.emit(job_id, line))
         self.current_runner.progress_changed.connect(lambda pct: self.job_progress.emit(job_id, pct))
+        self.current_runner.render_stats_received.connect(lambda stats: self.job_stats.emit(job_id, stats))
         
         # Execution status state variables
         self_retcode = None
@@ -290,7 +297,10 @@ class RenderQueue(QThread):
         
         if self_retcode == 0:
             # Render succeeded!
-            final_output_file = render_path
+            if job_type == "SINGLE_CAMERA_ANIMATION" and job.get("include_postprocessing", 1) == 0:
+                final_output_file = os.path.dirname(render_path)
+            else:
+                final_output_file = render_path
             
             # Postprocessing / Montages
             # A. If it was a Still frame and has Montage configured
@@ -309,13 +319,14 @@ class RenderQueue(QThread):
                 if os.path.exists(possible_montage):
                     montage_blend = possible_montage
             
-            if job_type == "SINGLE_CAMERA_STILL" and montage_blend:
+            if job_type == "SINGLE_CAMERA_STILL" and montage_blend and job.get("include_postprocessing", 1) == 1:
                 self.job_started.emit(job_id, f"Montando imagen: {camera_name}")
                 log_service.info(f"Iniciando render de montaje final usando: {montage_blend}", project_code)
                 
                 self.current_runner = BlenderRunner(project_code, job_id, camera_name + "_montaje")
                 self.current_runner.log_received.connect(lambda line: self.job_log.emit(job_id, line))
                 self.current_runner.progress_changed.connect(lambda pct: self.job_progress.emit(job_id, 50 + int(pct/2))) # scaled 50-100%
+                self.current_runner.render_stats_received.connect(lambda stats: self.job_stats.emit(job_id, stats))
                 
                 montage_retcode = None
                 montage_err = ""
@@ -343,7 +354,7 @@ class RenderQueue(QThread):
                     log_service.error(f"El montaje falló: {montage_err}. Se conserva render base.", project_code)
             
             # B. If it was an Animation sequence, compile video with FFmpeg
-            elif job_type == "SINGLE_CAMERA_ANIMATION":
+            elif job_type == "SINGLE_CAMERA_ANIMATION" and job.get("include_postprocessing", 1) == 1:
                 self.job_started.emit(job_id, f"Compilando video: {camera_name}")
                 fps = snapshot["fps"] if snapshot else 24
                 fps_base = snapshot["fps_base"] if snapshot else 1
@@ -371,7 +382,7 @@ class RenderQueue(QThread):
             if not os.path.exists(final_output_file):
                 is_valid = False
                 fail_reason = f"El archivo de salida esperado no se generó: {os.path.basename(final_output_file)}"
-            elif os.path.getsize(final_output_file) == 0:
+            elif not os.path.isdir(final_output_file) and os.path.getsize(final_output_file) == 0:
                 is_valid = False
                 fail_reason = f"El archivo de salida está vacío (0 bytes): {os.path.basename(final_output_file)}"
                 

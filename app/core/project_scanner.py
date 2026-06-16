@@ -65,24 +65,69 @@ def run_blender_scan(blend_path):
     
     if is_demo and not blender_exists:
         log_service.warning("Ejecutando escaneo simulado para el Proyecto Demo (Blender no configurado).")
-        return {
-            "blend_file": blend_path,
-            "scenes": ["Escena Demo"],
-            "current_scene": "Escena Demo",
-            "cameras": [
-                {"name": "Camara A (Simulada)", "active": True},
-                {"name": "Camara B (Simulada)", "active": False}
-            ],
-            "frame_start": 1,
-            "frame_end": 1,
-            "fps": 24,
-            "fps_base": 1,
-            "engine": "CYCLES_MOCK",
-            "resolution_x": 1920,
-            "resolution_y": 1080,
-            "resolution_percent": 100,
-            "missing_assets": []
-        }
+        filename = os.path.basename(blend_path)
+        
+        if "Salon" in filename or "Salon" in blend_path:
+            return {
+                "blend_file": blend_path,
+                "scenes": ["Escena Salon"],
+                "current_scene": "Escena Salon",
+                "cameras": [
+                    {"name": "Camara A", "active": True},
+                    {"name": "Camara B", "active": False},
+                    {"name": "Camara C", "active": False}
+                ],
+                "frame_start": 1,
+                "frame_end": 1,
+                "fps": 24,
+                "fps_base": 1,
+                "engine": "CYCLES_MOCK",
+                "resolution_x": 1920,
+                "resolution_y": 1080,
+                "resolution_percent": 100,
+                "resolution_percentage": 100,
+                "missing_assets": []
+            }
+        elif "Exterior" in filename or "Exterior" in blend_path:
+            return {
+                "blend_file": blend_path,
+                "scenes": ["Escena Exterior"],
+                "current_scene": "Escena Exterior",
+                "cameras": [
+                    {"name": "Camara Terraza", "active": True},
+                    {"name": "Camara Jardin", "active": False}
+                ],
+                "frame_start": 1,
+                "frame_end": 24,
+                "fps": 24,
+                "fps_base": 1,
+                "engine": "CYCLES_MOCK",
+                "resolution_x": 1920,
+                "resolution_y": 1080,
+                "resolution_percent": 100,
+                "resolution_percentage": 100,
+                "missing_assets": []
+            }
+        else:
+            return {
+                "blend_file": blend_path,
+                "scenes": ["Escena Demo"],
+                "current_scene": "Escena Demo",
+                "cameras": [
+                    {"name": "Camara A", "active": True},
+                    {"name": "Camara B", "active": False}
+                ],
+                "frame_start": 1,
+                "frame_end": 1,
+                "fps": 24,
+                "fps_base": 1,
+                "engine": "CYCLES_MOCK",
+                "resolution_x": 1920,
+                "resolution_y": 1080,
+                "resolution_percent": 100,
+                "resolution_percentage": 100,
+                "missing_assets": []
+            }
 
     if not blender_bin:
          raise FileNotFoundError("La ruta de Blender no está configurada en los ajustes.")
@@ -344,13 +389,14 @@ def scan_project(identifier, mode="IP_LEGACY", custom_output_dir=None):
                 INSERT INTO snapshots (
                     project_id, blend_path, blend_size, blend_modified_at, blender_version,
                     scene_name, fps, fps_base, resolution_x, resolution_y,
-                    resolution_percent, render_engine, scan_warnings
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    resolution_percent, render_engine, scan_warnings, frame_start, frame_end
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 project_id, blend_path, file_size, mod_time, "5.1",
                 metadata["current_scene"], metadata["fps"], metadata["fps_base"],
                 metadata["resolution_x"], metadata["resolution_y"],
-                metadata["resolution_percentage"], metadata["engine"], warnings_str
+                metadata["resolution_percentage"], metadata["engine"], warnings_str,
+                metadata.get("frame_start", 1), metadata.get("frame_end", 1)
             ))
             snapshot_id = cursor.lastrowid
             conn.commit()

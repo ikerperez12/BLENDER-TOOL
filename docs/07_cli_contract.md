@@ -79,7 +79,7 @@ All Blender background scripts are required to output progress, state changes, w
 
 ### Log Line Syntax
 ```text
-IPBT_EVENT {"type": "<event_type>", "phase": "<phase_name>", "message": "<log_message>", ...}
+IPBT_EVENT {"job_id": <job_id>, "type": "<event_type>", "phase": "<phase_name>", "message": "<log_message>", ...}
 ```
 *Note: The script must flush stdout (`flush=True`) immediately after printing the event.*
 
@@ -96,28 +96,30 @@ The pipeline execution is divided into the following phases:
 
 #### A. Execution Milestones
 * **`job_started`**: Emitted on execution start.
-  - Payload: `{"phase": "launch", "message": "..."}`
+  - Payload: `{"job_id": 123, "type": "job_started", "phase": "launch", "message": "..."}`
 * **`blend_loaded`**: Emitted when the `.blend` file is fully loaded into memory.
-  - Payload: `{"phase": "load", "message": "..."}`
+  - Payload: `{"job_id": 123, "type": "blend_loaded", "phase": "load", "message": "..."}`
 * **`scene_prepared`**: Emitted when cameras, resolution overrides, and rendering configurations are successfully set up.
-  - Payload: `{"phase": "prepare", "message": "..."}`
+  - Payload: `{"job_id": 123, "type": "scene_prepared", "phase": "prepare", "message": "..."}`
 * **`render_started`**: Emitted just before calling the rendering operator.
-  - Payload: `{"phase": "render", "message": "..."}`
+  - Payload: `{"job_id": 123, "type": "render_started", "phase": "render", "message": "..."}`
 * **`render_saved`**: Emitted when the rendered frame is saved.
-  - Payload: `{"phase": "save", "message": "..."}`
+  - Payload: `{"job_id": 123, "type": "render_saved", "phase": "save", "message": "..."}`
 * **`job_completed`**: Emitted on successful script exit.
-  - Payload: `{"phase": "complete", "message": "..."}`
+  - Payload: `{"job_id": 123, "type": "job_completed", "phase": "complete", "message": "..."}`
 
-#### B. Progress Updates
-* **`progress_update`**: Emitted periodically during a single frame render (primarily for Cycles samples progress).
-  - Payload: `{"phase": "render", "current": int, "total": int}`
+#### B. Progress & Telemetry Updates
+* **`progress_update`**: Emitted periodically during rendering.
+  - Payload: `{"job_id": 123, "type": "progress_update", "phase": "render", "current": int, "total": int}`
 * **`frame_started`**: Emitted when beginning a specific frame.
-  - Payload: `{"phase": "render", "frame": int}`
+  - Payload: `{"job_id": 123, "type": "frame_started", "phase": "render", "frame": int}`
 * **`frame_done`**: Emitted when a frame is saved during an animation sequence.
-  - Payload: `{"phase": "render", "frame": int, "total_frames": int, "output": "..."}`
+  - Payload: `{"job_id": 123, "type": "frame_done", "phase": "render", "frame": int, "total_frames": int, "output": "..."}`
+* **`stats_update`**: Emitted during rendering to update auxiliary stats label.
+  - Payload: `{"job_id": 123, "type": "stats_update", "phase": "render", "memory": "5136M", "tiles_current": 2, "tiles_total": 6, "samples_current": 528, "samples_total": 1000, "remaining": "05:10.31"}`
 
 #### C. Diagnoses & Errors
 * **`warning`**: Non-critical notices (e.g. missing texture file fallbacks).
-  - Payload: `{"message": "..."}`
+  - Payload: `{"job_id": 123, "type": "warning", "message": "..."}`
 * **`error`**: Critical failures that halt execution.
-  - Payload: `{"code": "<error_code>", "message": "..."}`
+  - Payload: `{"job_id": 123, "type": "error", "code": "<error_code>", "message": "..."}`

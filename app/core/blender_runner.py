@@ -19,6 +19,7 @@ class BlenderRunner(QObject):
     progress_changed = Signal(int)
     status_message = Signal(str)
     finished = Signal(int, str)  # return_code, error_summary
+    render_stats_received = Signal(dict) # memory, tiles, samples, remaining
 
     def __init__(self, project_code, job_id, camera_name, job_type=None, log_path=None):
         super().__init__()
@@ -38,6 +39,7 @@ class BlenderRunner(QObject):
             
         self.process = None
         self.is_cancelled = False
+        self.has_clean_stats_events = False
 
     def kill_process_tree(self):
         """Kills the blender process and all its children recursively."""
@@ -87,7 +89,56 @@ class BlenderRunner(QObject):
         """Triggers process cancellation."""
         self.is_cancelled = True
         if self.process:
+            # If suspended, resume first so it responds to signals/termination
+            try:
+                self.resume()
+                import time
+                time.sleep(0.5) # Esperar un instante
+            except Exception:
+                pass
             self.kill_process_tree()
+
+    def pause(self):
+        """Suspends the blender process and all its children recursively."""
+        if not self.process:
+            return
+        pid = self.process.pid
+        log_service.info(f"Suspendiendo proceso de PID {pid}...", self.project_code)
+        try:
+            parent = psutil.Process(pid)
+            for child in parent.children(recursive=True):
+                try:
+                    child.suspend()
+                except psutil.NoSuchProcess:
+                    pass
+            try:
+                parent.suspend()
+            except psutil.NoSuchProcess:
+                pass
+            self.log_received.emit(">>> RENDERIZADO PAUSADO (Recursos liberados) <<<")
+        except Exception as e:
+            log_service.error(f"Error al suspender el proceso: {e}", self.project_code)
+
+    def resume(self):
+        """Resumes the suspended blender process and all its children recursively."""
+        if not self.process:
+            return
+        pid = self.process.pid
+        log_service.info(f"Reanudando proceso de PID {pid}...", self.project_code)
+        try:
+            parent = psutil.Process(pid)
+            try:
+                parent.resume()
+            except psutil.NoSuchProcess:
+                pass
+            for child in parent.children(recursive=True):
+                try:
+                    child.resume()
+                except psutil.NoSuchProcess:
+                    pass
+            self.log_received.emit(">>> RENDERIZADO REANUDADO <<<")
+        except Exception as e:
+            log_service.error(f"Error al reanudar el proceso: {e}", self.project_code)
 
     def run_still_render(self, blend_path, camera_name, output_path, profile="Client", res_pct=100, engine="", device="GPU", frame=1):
         """Runs a still image render for a single camera."""
@@ -114,7 +165,8 @@ class BlenderRunner(QObject):
             "--res-pct", str(res_pct),
             "--device", device,
             "--frame-start", str(frame),
-            "--frame-end", str(frame)
+            "--frame-end", str(frame),
+            "--job-id", str(self.job_id)
         ]
 
         if engine:
@@ -148,7 +200,8 @@ class BlenderRunner(QObject):
             "--device", device,
             "--frame-start", str(frame_start),
             "--frame-end", str(frame_end),
-            "--is-animation"
+            "--is-animation",
+            "--job-id", str(self.job_id)
         ]
 
         if engine:
@@ -176,7 +229,8 @@ class BlenderRunner(QObject):
             "--python", script_path,
             "--",
             "--img-path", img_path,
-            "--output", output_path
+            "--output", output_path,
+            "--job-id", str(self.job_id)
         ]
 
         self._execute_blender(args, frame_mode=False, is_montage=True)
@@ -255,6 +309,28 @@ class BlenderRunner(QObject):
                                 error_lines.append(err_msg)
                             elif ev_type == "warning":
                                 self.log_received.emit(f"[ADVERTENCIA] {ev_msg}")
+                            elif ev_type == "stats_update":
+                                self.has_clean_stats_events = True
+                                # Extract stats from event
+                                memory = event_data.get("memory")
+                                tiles_curr = event_data.get("tiles_current")
+                                tiles_tot = event_data.get("tiles_total")
+                                samples_curr = event_data.get("samples_current")
+                                samples_tot = event_data.get("samples_total")
+                                remaining = event_data.get("remaining")
+                                
+                                stats_dict = {}
+                                if memory is not None:
+                                    stats_dict["memory"] = str(memory)
+                                if tiles_curr is not None and tiles_tot is not None:
+                                    stats_dict["tiles"] = f"{tiles_curr}/{tiles_tot}"
+                                if samples_curr is not None and samples_tot is not None:
+                                    stats_dict["samples"] = f"{samples_curr}/{samples_tot}"
+                                if remaining is not None:
+                                    stats_dict["remaining"] = str(remaining)
+                                    
+                                if stats_dict:
+                                    self.render_stats_received.emit(stats_dict)
                             elif ev_type in ["job_started", "blend_loaded", "scene_prepared", "render_started", "render_saved", "compositor_started", "compositor_image_replaced", "compositor_saved", "job_completed"]:
                                 if ev_msg:
                                     self.log_received.emit(f"[INFO] {ev_msg}")
@@ -298,6 +374,9 @@ class BlenderRunner(QObject):
                         except Exception as parse_err:
                             log_service.error(f"Error parsing IPBT_EVENT: {parse_err}", self.project_code)
                     else:
+                        # Parse standard output for rendering stats
+                        self._parse_blender_stats(line_str)
+                        
                         # Non-event line: show only warnings and errors in UI console
                         upper_line = line_str.upper()
                         # Capture potential critical system errors
@@ -346,6 +425,8 @@ class BlenderRunner(QObject):
                 break
                 
         steps = 10
+        total_samples = 1000
+        total_tiles = 6
         for step in range(steps + 1):
             if self.is_cancelled:
                 self.log_received.emit("❌ Renderizado simulado cancelado por el usuario.")
@@ -354,11 +435,31 @@ class BlenderRunner(QObject):
                 
             pct = int(100.0 * step / steps)
             self.progress_changed.emit(pct)
+            
+            # Simulate changing stats
+            samples = int(total_samples * (step / steps))
+            tiles = int(total_tiles * (step / steps))
+            if tiles > total_tiles:
+                tiles = total_tiles
+                
+            rem_seconds = int((steps - step) * 30)
+            mins = rem_seconds // 60
+            secs = rem_seconds % 60
+            remaining_str = f"{mins:02d}:{secs:02d}.00"
+            
+            mock_stats = {
+                "memory": "5136M",
+                "tiles": f"{tiles}/{total_tiles}",
+                "samples": f"{samples}/{total_samples}",
+                "remaining": remaining_str
+            }
+            self.render_stats_received.emit(mock_stats)
+
             if is_montage:
                 self.log_received.emit(f"Montaje simulado en progreso... {pct}%")
             else:
-                self.log_received.emit(f"Procesando muestras de cámara (simulado)... {pct}%")
-            time.sleep(0.2)
+                self.log_received.emit(f"Procesando muestras de cámara (simulado)... {pct}% (Muestras: {samples}/{total_samples})")
+            time.sleep(0.3)
             
         if output_path:
             try:
@@ -381,3 +482,36 @@ class BlenderRunner(QObject):
                 
         self.progress_changed.emit(100)
         self.finished.emit(0, "")
+
+    def _parse_blender_stats(self, line):
+        """Parses standard Blender render log lines to extract stats and emit them."""
+        if self.has_clean_stats_events:
+            return
+        stats = {}
+        
+        # 1. Parse memory
+        mem_match = re.search(r"Mem:([0-9\.]+[GMK]?)", line)
+        if mem_match:
+            stats["memory"] = mem_match.group(1)
+            
+        # 2. Parse remaining time
+        rem_match = re.search(r"Remaining:([0-9:.]+)", line, re.IGNORECASE)
+        if rem_match:
+            stats["remaining"] = rem_match.group(1)
+            
+        # 3. Parse tiles
+        tiles_match = re.search(r"Rendered\s+(\d+/\d+)\s+Tiles", line, re.IGNORECASE)
+        if tiles_match:
+            stats["tiles"] = tiles_match.group(1)
+        else:
+            tiles_match_2 = re.search(r"Rendered\s+(\d+)\s+Tiles", line, re.IGNORECASE)
+            if tiles_match_2:
+                stats["tiles"] = tiles_match_2.group(1)
+            
+        # 4. Parse samples
+        samples_match = re.search(r"Sample\s+(\d+/\d+)", line, re.IGNORECASE)
+        if samples_match:
+            stats["samples"] = samples_match.group(1)
+            
+        if stats:
+            self.render_stats_received.emit(stats)

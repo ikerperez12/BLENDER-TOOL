@@ -1,6 +1,6 @@
 # Theme configuration and stylesheet for IP Blender Tool
 
-DARK_THEME_STYLE = """
+_DARK_THEME_STYLE_TEMPLATE = """
 /* Global styling */
 QWidget {
     background-color: #121214;
@@ -128,24 +128,44 @@ QPushButton#dangerButton:pressed {
 /* Checkboxes */
 QCheckBox {
     spacing: 8px;
+    color: #e4e4e7;
 }
 
 QCheckBox::indicator {
     width: 18px;
     height: 18px;
-    border: 1px solid #3f3f46;
-    border-radius: 3px;
+    border: 2px solid #3f3f46;
+    border-radius: 4px;
     background-color: #18181b;
 }
 
 QCheckBox::indicator:hover {
     border-color: #0da2ff;
+    background-color: #27272a;
+}
+
+QCheckBox::indicator:unchecked {
+    image: none;
 }
 
 QCheckBox::indicator:checked {
     background-color: #007acc;
     border-color: #0da2ff;
-    image: url(data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>);
+    image: url(__CHECKMARK_PATH__);
+}
+
+QCheckBox::indicator:checked:hover {
+    background-color: #0098ff;
+    border-color: #38bdf8;
+}
+
+QCheckBox::indicator:disabled {
+    border-color: #27272a;
+    background-color: #09090b;
+}
+
+QCheckBox:disabled {
+    color: #52525b;
 }
 
 /* Table styling */
@@ -220,7 +240,33 @@ QTextEdit#consoleBox {
     color: #a1a1aa;
     padding: 8px;
 }
+
+/* CameraRowWidget interactive style */
+QWidget#cameraRow {
+    border-radius: 4px;
+    background-color: #1e1e24;
+    margin: 1px 0px;
+}
+QWidget#cameraRow:hover {
+    background-color: #272730;
+}
 """
+
+import os
+import sys
+
+def get_resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+    return os.path.join(base_path, relative_path).replace("\\", "/")
+
+CHECKMARK_PATH = get_resource_path("app/ui/resources/checkbox_checked.png")
+DARK_THEME_STYLE = _DARK_THEME_STYLE_TEMPLATE.replace("__CHECKMARK_PATH__", CHECKMARK_PATH)
 
 STATUS_STYLES = {
     "Pending": "color: #a1a1aa; font-weight: bold;",

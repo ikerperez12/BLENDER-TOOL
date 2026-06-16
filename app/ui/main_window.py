@@ -17,6 +17,23 @@ from app.core.render_queue import RenderQueue
 from app.ui.theme import DARK_THEME_STYLE, STATUS_STYLES
 from app.core.diagnostics import run_preflight_checks, export_diagnostics_zip, create_demo_project
 
+class CameraRowWidget(QWidget):
+    """A custom widget for camera list rows that makes the entire row clickable."""
+    def __init__(self, main_cb, parent=None):
+        super().__init__(parent)
+        self.main_cb = main_cb
+        self.setObjectName("cameraRow")
+        self.setAttribute(Qt.WA_Hover, True)
+        
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            child = self.childAt(event.position().toPoint())
+            if child is None or (child is not self.main_cb and not isinstance(child, QCheckBox)):
+                self.main_cb.toggle()
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
 class FirstRunWizard(QDialog):
     """Step-by-step first run configuration wizard."""
     def __init__(self, parent=None):
@@ -411,6 +428,7 @@ class MainWindow(QMainWindow):
         self.queue_thread.job_log.connect(self.on_job_log)
         self.queue_thread.job_finished.connect(self.on_job_finished)
         self.queue_thread.queue_state_changed.connect(self.on_queue_state_changed)
+        self.queue_thread.job_stats.connect(self.on_job_stats)
         
         self.setup_ui()
         self.load_settings()
@@ -720,6 +738,13 @@ class MainWindow(QMainWindow):
         self.queue_progress.setVisible(False)
         queue_layout.addWidget(self.queue_progress)
         
+        # Stats Label
+        self.render_stats_lbl = QLabel("")
+        self.render_stats_lbl.setStyleSheet("color: #a1a1aa; font-family: Consolas, monospace; font-size: 11px; margin-top: 4px;")
+        self.render_stats_lbl.setVisible(False)
+        self.render_stats_lbl.setAlignment(Qt.AlignCenter)
+        queue_layout.addWidget(self.render_stats_lbl)
+        
         # Queue Controls
         ctrl_layout = QHBoxLayout()
         self.start_btn = QPushButton("▶ Iniciar Cola")
@@ -728,6 +753,10 @@ class MainWindow(QMainWindow):
         self.pause_btn = QPushButton("⏸ Pausar")
         self.pause_btn.clicked.connect(self.pause_render_queue)
         self.pause_btn.setEnabled(False)
+        self.pause_btn.setToolTip(
+            "Pausar render mantiene la memoria GPU/VRAM ocupada.\n"
+            "Para liberar recursos completamente, usa Cancelar."
+        )
         
         self.cancel_btn = QPushButton("🛑 Cancelar Actual")
         self.cancel_btn.setObjectName("dangerButton")
@@ -824,7 +853,8 @@ class MainWindow(QMainWindow):
 
     def open_settings(self):
         dialog = SettingsDialog(self)
-        dialog.exec()
+        if dialog.exec() == QDialog.Accepted:
+            self.check_first_run_status()
 
     def on_completion_action_changed(self, text):
         if text == "Apagar PC":
@@ -1175,13 +1205,13 @@ class MainWindow(QMainWindow):
                     cam_name = camera["name"]
                     is_active = camera["active"]
                     
-                    cam_row = QWidget()
-                    cam_row_layout = QHBoxLayout(cam_row)
-                    cam_row_layout.setContentsMargins(5, 2, 5, 2)
-                    
                     # 1. Main check
                     main_cb = QCheckBox(f"{cam_name} ({os.path.basename(blend_path)})")
                     main_cb.setChecked(is_active)  # Check by default if active camera
+                    
+                    cam_row = CameraRowWidget(main_cb)
+                    cam_row_layout = QHBoxLayout(cam_row)
+                    cam_row_layout.setContentsMargins(5, 2, 5, 2)
                     
                     # 2. Montage checkbox
                     montage_cb = QCheckBox("+ Montaje")
@@ -1241,12 +1271,12 @@ class MainWindow(QMainWindow):
                     INSERT INTO jobs (
                         project_id, snapshot_id, job_type, scene_name, camera_name,
                         frame_start, frame_end, output_root, output_pattern, blend_path,
-                        profile, resolution_percent, status
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        profile, resolution_percent, status, include_postprocessing
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     self.scanned_project_id, snapshot_id, job_type, snapshot["scene_name"], cam_name,
                     frame_start, frame_end, output_root, blend_path, blend_path,
-                    profile, res_pct, "Pending"
+                    profile, res_pct, "Pending", 1 if montage_cb.isChecked() else 0
                 ))
                 selected_count += 1
                 
@@ -1314,16 +1344,37 @@ class MainWindow(QMainWindow):
             self.refresh_queue_table()
 
     def open_output_folder(self):
-        """Opens the output folder of the currently selected or scanned project."""
-        target_dir = get_setting("base_dir")
-        if self.scanned_project_id:
-            conn = get_db_connection()
-            row = conn.execute("SELECT output_path FROM projects WHERE id = ?", (self.scanned_project_id,)).fetchone()
+        """Opens the output folder of the currently selected job's project or scanned project."""
+        target_dir = None
+        conn = get_db_connection()
+        try:
+            # 1. Try selected/active job first
+            job_id = self.get_selected_job_id()
+            if job_id:
+                row = conn.execute("SELECT output_root FROM jobs WHERE id = ?", (job_id,)).fetchone()
+                if row and row[0]:
+                    target_dir = row[0]
+            
+            # 2. If no job, try scanned project
+            if not target_dir and self.scanned_project_id:
+                row = conn.execute("SELECT output_path FROM projects WHERE id = ?", (self.scanned_project_id,)).fetchone()
+                if row and row[0]:
+                    target_dir = row[0]
+        except Exception as e:
+            log_service.error(f"Error al obtener ruta de salida de la base de datos: {e}")
+        finally:
             conn.close()
-            if row and os.path.exists(row[0]):
-                target_dir = row[0]
-                
-        os.startfile(target_dir)
+            
+        # 3. Fallback to base_dir setting if nothing found or resolved
+        if not target_dir:
+            target_dir = get_setting("base_dir")
+            
+        if target_dir:
+            try:
+                os.makedirs(target_dir, exist_ok=True)
+                os.startfile(target_dir)
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"No se pudo abrir la carpeta de salida:\n{target_dir}\n\nDetalle: {e}")
 
     # ================= QUEUE THREAD SLOTS =================
     @Slot(int, str)
@@ -1334,6 +1385,10 @@ class MainWindow(QMainWindow):
         self.queue_progress.setValue(0)
         self.queue_progress.setFormat(f"{label}: %p%")
         self._current_label = label
+        
+        # Reset and hide stats label until stats arrive
+        self.render_stats_lbl.setText("")
+        self.render_stats_lbl.setVisible(False)
 
     @Slot(int, int)
     def on_job_progress(self, job_id, percent):
@@ -1355,7 +1410,23 @@ class MainWindow(QMainWindow):
     @Slot(int, str, str)
     def on_job_finished(self, job_id, status, output_file):
         self.queue_progress.setVisible(False)
+        self.render_stats_lbl.setVisible(False)
         self.refresh_queue_table()
+
+    @Slot(int, dict)
+    def on_job_stats(self, job_id, stats):
+        mem = stats.get("memory", "N/D")
+        tiles = stats.get("tiles", "N/D")
+        samples = stats.get("samples", "N/D")
+        remaining = stats.get("remaining", "N/D")
+        
+        if (mem in ["N/D", "", None] and tiles in ["N/D", "", None] and 
+            samples in ["N/D", "", None] and remaining in ["N/D", "", None]):
+            self.render_stats_lbl.setText("Estadísticas no disponibles")
+        else:
+            text = f"Memoria: {mem}   |   Tiles: {tiles}   |   Samples: {samples}   |   Restante: {remaining}"
+            self.render_stats_lbl.setText(text)
+        self.render_stats_lbl.setVisible(True)
 
     @Slot(str)
     def on_queue_state_changed(self, state):
@@ -1368,7 +1439,7 @@ class MainWindow(QMainWindow):
             self.start_btn.setEnabled(True)
             self.start_btn.setText("▶ Reanudar Cola")
             self.pause_btn.setEnabled(False)
-            self.cancel_btn.setEnabled(False)
+            self.cancel_btn.setEnabled(True)  # Habilitar cancelación durante pausa
             self.clear_queue_btn.setEnabled(True)
         else: # Stopped
             self.start_btn.setEnabled(True)

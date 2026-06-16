@@ -9,6 +9,11 @@ import re
 def emit_event(event_type, **payload):
     payload["type"] = event_type
     payload["timestamp"] = time.time()
+    if render_args and hasattr(render_args, "job_id") and render_args.job_id:
+        try:
+            payload["job_id"] = int(render_args.job_id)
+        except ValueError:
+            payload["job_id"] = render_args.job_id
     print("IPBT_EVENT " + json.dumps(payload, ensure_ascii=False), flush=True)
 
 # Global args to reference inside handlers
@@ -31,14 +36,48 @@ def on_render_write(scene):
 @bpy.app.handlers.persistent
 def on_render_stats(scene):
     stats_str = scene.render.stats
+    
+    # 1. Standard progress_update for Cycles samples
     m = re.search(r"Sample\s+(\d+)\s*/\s*(\d+)", stats_str)
     if m:
         current_sample = int(m.group(1))
         total_samples = int(m.group(2))
         emit_event("progress_update", phase="render", current=current_sample, total=total_samples, stats=stats_str)
+        
+    # 2. Extract and emit stats_update for detailed UI stats
+    stats = {}
+    
+    # Memory
+    mem_m = re.search(r"Mem:([0-9\.]+[GMK]?)", stats_str)
+    if mem_m:
+        stats["memory"] = mem_m.group(1)
+        
+    # Remaining
+    rem_m = re.search(r"Remaining:([0-9:.]+)", stats_str, re.IGNORECASE)
+    if rem_m:
+        stats["remaining"] = rem_m.group(1)
+        
+    # Tiles
+    tiles_m = re.search(r"Rendered\s+(\d+/\d+)\s+Tiles", stats_str, re.IGNORECASE)
+    if tiles_m:
+        parts = tiles_m.group(1).split("/")
+        if len(parts) == 2:
+            stats["tiles_current"] = int(parts[0])
+            stats["tiles_total"] = int(parts[1])
+    else:
+        tiles_m2 = re.search(r"Rendered\s+(\d+)\s+Tiles", stats_str, re.IGNORECASE)
+        if tiles_m2:
+            stats["tiles_current"] = int(tiles_m2.group(1))
+            stats["tiles_total"] = 1
+            
+    # Samples
+    if m:
+        stats["samples_current"] = int(m.group(1))
+        stats["samples_total"] = int(m.group(2))
+        
+    if stats:
+        emit_event("stats_update", phase="render", **stats)
 
-# Notify launch immediately when python script starts executing
-emit_event("job_started", phase="launch", message="Blender iniciado")
 
 def parse_args():
     global render_args
@@ -58,6 +97,7 @@ def parse_args():
     parser.add_argument("--frame-start", type=int, default=1, help="Start frame.")
     parser.add_argument("--frame-end", type=int, default=1, help="End frame.")
     parser.add_argument("--is-animation", action="store_true", help="Render as animation instead of single frame.")
+    parser.add_argument("--job-id", type=str, default="", help="Job ID associated with this render.")
     
     parsed = parser.parse_args(args_list)
     render_args = parsed
@@ -146,6 +186,7 @@ def apply_profile(profile_name, engine):
 
 def render():
     args = parse_args()
+    emit_event("job_started", phase="launch", message="Blender iniciado")
     emit_event("blend_loaded", phase="load", message=f"Archivo .blend cargado: {os.path.basename(bpy.data.filepath)}")
     
     scene = bpy.context.scene
