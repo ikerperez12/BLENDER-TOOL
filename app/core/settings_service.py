@@ -253,5 +253,4 @@ def initialize_settings():
     conn.commit()
     conn.close()
 
-# Initialize settings on import
-initialize_settings()
+# Note: initialize_settings is called inside init_db to prevent table-not-found race conditions on import.

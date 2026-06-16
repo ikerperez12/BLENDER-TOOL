@@ -161,6 +161,10 @@ def init_db():
     conn.commit()
     conn.close()
 
+    # Initialize default settings safely after tables have been created
+    from app.core.settings_service import initialize_settings
+    initialize_settings()
+
 if __name__ == "__main__":
     init_db()
     print("Database initialized successfully at:", DB_PATH)
