@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QHeaderView, QTextEdit, QDialog, QFormLayout, QFileDialog, QProgressBar,
     QMessageBox, QApplication, QSplitter, QTabWidget
 )
-from PySide6.QtGui import QIcon, QFont, QPixmap
+from PySide6.QtGui import QIcon, QFont, QPixmap, QTextCursor
 
 from app.core.db import get_db_connection
 from app.core.settings_service import get_setting, set_setting
@@ -63,13 +63,35 @@ class FirstRunWizard(QDialog):
         form.addRow("Ruta de Blender.exe:", blender_layout)
 
         # 2. FFmpeg Path
-        self.ffmpeg_edit = QLineEdit(get_setting("ffmpeg_path"))
+        from app.core.settings_service import auto_detect_ffmpeg, is_ffmpeg_available
+        detected_ffmpeg = get_setting("ffmpeg_path") or auto_detect_ffmpeg()
+        self.ffmpeg_edit = QLineEdit(detected_ffmpeg)
         self.ffmpeg_btn = QPushButton("Examinar...")
         self.ffmpeg_btn.clicked.connect(self.browse_ffmpeg)
+
+        self.ffmpeg_status_lbl = QLabel()
+        self.ffmpeg_status_lbl.setFixedWidth(24)
+        self._update_ffmpeg_status(detected_ffmpeg)
+
+        self.ffmpeg_install_btn = QPushButton("📦 Instalar con winget")
+        self.ffmpeg_install_btn.setToolTip("Ejecuta: winget install Gyan.FFmpeg (sin permisos de admin)")
+        self.ffmpeg_install_btn.setFixedWidth(170)
+        self.ffmpeg_install_btn.clicked.connect(self._install_ffmpeg_winget)
+
         ffmpeg_layout = QHBoxLayout()
+        ffmpeg_layout.addWidget(self.ffmpeg_status_lbl)
         ffmpeg_layout.addWidget(self.ffmpeg_edit)
         ffmpeg_layout.addWidget(self.ffmpeg_btn)
-        form.addRow("Ruta de FFmpeg.exe:", ffmpeg_layout)
+        ffmpeg_layout.addWidget(self.ffmpeg_install_btn)
+
+        ffmpeg_note = QLabel("Opcional. Necesario solo para compilar animaciones a MP4.")
+        ffmpeg_note.setStyleSheet("color: #71717a; font-size: 11px; margin-top: -8px;")
+        ffmpeg_note.setWordWrap(True)
+
+        ffmpeg_container = QVBoxLayout()
+        ffmpeg_container.addLayout(ffmpeg_layout)
+        ffmpeg_container.addWidget(ffmpeg_note)
+        form.addRow("Ruta de FFmpeg.exe:", ffmpeg_container)
 
         # 3. Projects Root Folder
         self.projects_root_edit = QLineEdit(get_setting("projects_root"))
@@ -116,6 +138,70 @@ class FirstRunWizard(QDialog):
         )
         if path:
             self.ffmpeg_edit.setText(os.path.normpath(path))
+            self._update_ffmpeg_status(os.path.normpath(path))
+
+    def _update_ffmpeg_status(self, ffmpeg_path):
+        """Updates the FFmpeg status indicator emoji."""
+        from app.core.settings_service import is_ffmpeg_available
+        if ffmpeg_path and is_ffmpeg_available(ffmpeg_path):
+            self.ffmpeg_status_lbl.setText("✅")
+            self.ffmpeg_status_lbl.setToolTip("FFmpeg detectado correctamente")
+            self.ffmpeg_install_btn.setVisible(False)
+        else:
+            self.ffmpeg_status_lbl.setText("⚠️")
+            self.ffmpeg_status_lbl.setToolTip("FFmpeg no encontrado (opcional)")
+            self.ffmpeg_install_btn.setVisible(True)
+
+    def _install_ffmpeg_winget(self):
+        """Attempts to install FFmpeg using winget (no admin required)."""
+        import subprocess
+        self.ffmpeg_install_btn.setEnabled(False)
+        self.ffmpeg_install_btn.setText("Instalando...")
+        QApplication.processEvents()
+
+        try:
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            result = subprocess.run(
+                ["winget", "install", "Gyan.FFmpeg", "--accept-source-agreements", "--accept-package-agreements"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, encoding="utf-8", errors="ignore",
+                startupinfo=startupinfo, timeout=120
+            )
+
+            if result.returncode == 0:
+                # Re-detect after installation
+                from app.core.settings_service import auto_detect_ffmpeg
+                new_path = auto_detect_ffmpeg()
+                if new_path:
+                    self.ffmpeg_edit.setText(new_path)
+                    self._update_ffmpeg_status(new_path)
+                    QMessageBox.information(self, "FFmpeg instalado",
+                        f"FFmpeg se instaló correctamente.\nRuta detectada: {new_path}")
+                else:
+                    # winget succeeded but might need PATH refresh
+                    self.ffmpeg_edit.setText("ffmpeg")
+                    self._update_ffmpeg_status("ffmpeg")
+                    QMessageBox.information(self, "FFmpeg instalado",
+                        "FFmpeg se instaló. Es posible que necesites reiniciar la app para que detecte la ruta.")
+            else:
+                QMessageBox.warning(self, "Error al instalar FFmpeg",
+                    f"winget devolvió código {result.returncode}.\n\n"
+                    "Puedes instalarlo manualmente desde:\nhttps://ffmpeg.org/download.html\n\n"
+                    "O ejecutar en PowerShell:\nwinget install Gyan.FFmpeg")
+        except FileNotFoundError:
+            QMessageBox.warning(self, "winget no disponible",
+                "winget no está instalado en este sistema.\n\n"
+                "Puedes instalar FFmpeg manualmente desde:\nhttps://ffmpeg.org/download.html\n\n"
+                "Descarga la versión 'essentials', extrae el ZIP y pon la ruta de ffmpeg.exe aquí.")
+        except subprocess.TimeoutExpired:
+            QMessageBox.warning(self, "Timeout",
+                "La instalación tardó demasiado. Intenta ejecutar manualmente:\nwinget install Gyan.FFmpeg")
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Error inesperado: {e}")
+        finally:
+            self.ffmpeg_install_btn.setEnabled(True)
+            self.ffmpeg_install_btn.setText("📦 Instalar con winget")
 
     def browse_projects_root(self):
         path = QFileDialog.getExistingDirectory(
@@ -765,8 +851,7 @@ class MainWindow(QMainWindow):
     def append_log_to_console(self, text):
         self.console_box.append(text)
         # Keep buffer size reasonable
-        cursor = self.console_box.textCursor()
-        self.console_box.moveCursor(cursor.End)
+        self.console_box.moveCursor(QTextCursor.MoveOperation.End)
 
     def get_selected_job_id(self):
         # 1. First, check if there is an active running job in the queue thread

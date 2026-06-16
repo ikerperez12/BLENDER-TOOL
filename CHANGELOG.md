@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.0-rc2] - 2026-06-16
+### Fixed
+- **Critical Packaging Fix**: Renamed invalid Python variable `3d_dirs` to `dirs_3d` in `project_scanner.py` — this `SyntaxError` blocked all imports and caused the compiled `.exe` to crash at startup with `ModuleNotFoundError`.
+- **QTextCursor Runtime Error**: Fixed `AttributeError: 'PySide6.QtGui.QTextCursor' object has no attribute 'End'` in `main_window.py` by importing `QTextCursor` and using the correct `QTextCursor.MoveOperation.End` enum.
+- **Deprecated Qt Attribute**: Removed `Qt.AA_UseHighDpiPixmaps` from `app/main.py` — this attribute is always enabled in Qt6/PySide6 and produced a `DeprecationWarning` on every startup.
+
+### Improved
+- **PyInstaller Spec**: Added `pathex=['.']` and `collect_submodules('app')` to `IPBlenderTool.spec` for reliable module discovery.
+- **Package Markers**: Ensured `__init__.py` exists in `app/`, `app/core/`, and `app/ui/` for explicit package recognition.
+- **Pre-flight Verification**: Enhanced `verify.py` with exhaustive import checks for all `app` submodules including `app.main`, aborting the build immediately if any import fails.
+
 ## [0.6.0] - 2026-06-16
 ### Added
 - **AppData Storage Isolation**: Relocated `jobs.sqlite` database, log files, and system preferences to `%APPDATA%/IP Blender Tool/` directory to prevent permission errors on Windows.

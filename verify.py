@@ -35,6 +35,7 @@ except ImportError as e:
 
 # Verify app submodules imports
 app_modules = [
+    "app.main",
     "app.core.db",
     "app.core.settings_service",
     "app.core.log_service",

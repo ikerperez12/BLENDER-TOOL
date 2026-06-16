@@ -9,7 +9,6 @@ os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
 os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
 
 from PySide6.QtWidgets import QApplication
-from PySide6.QtCore import Qt
 from app.core.db import init_db
 from app.ui.main_window import MainWindow
 
@@ -24,9 +23,6 @@ def main():
     font = app.font()
     font.setPointSize(10)
     app.setFont(font)
-    
-    # Enable anti-aliased SVG icons if available
-    app.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
     
     window = MainWindow()
     window.show()

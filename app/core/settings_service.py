@@ -162,21 +162,77 @@ def auto_detect_blender():
     return ""
 
 def auto_detect_ffmpeg():
-    """Tries to find ffmpeg."""
-    # 1. Check if 'ffmpeg' is in PATH
+    """Tries to find ffmpeg across common Windows installation locations."""
+    # 1. Check if 'ffmpeg' is already in PATH
     try:
-        subprocess.run(["ffmpeg", "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        startupinfo = None
+        if os.name == 'nt':
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        subprocess.run(
+            ["ffmpeg", "-version"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            startupinfo=startupinfo, check=True, timeout=10
+        )
         return "ffmpeg"
     except Exception:
         pass
-        
-    # 2. Check WinGet Packages location or user AppData
-    winget_pattern = os.path.expandvars(r"%USERPROFILE%\AppData\Local\Microsoft\WinGet\Packages\*ffmpeg*\**\ffmpeg.exe")
-    matches = glob.glob(winget_pattern, recursive=True)
-    if matches:
-        return matches[0]
-        
-    return "ffmpeg"
+
+    home = os.environ.get("USERPROFILE", os.path.expanduser("~"))
+
+    # 2. Common installation directories on Windows
+    search_paths = [
+        # WinGet packages
+        os.path.join(home, r"AppData\Local\Microsoft\WinGet\Packages"),
+        # Chocolatey
+        r"C:\ProgramData\chocolatey\bin",
+        r"C:\ProgramData\chocolatey\lib\ffmpeg\tools\ffmpeg\bin",
+        # Scoop
+        os.path.join(home, r"scoop\apps\ffmpeg\current\bin"),
+        os.path.join(home, r"scoop\shims"),
+        # Manual installs in common locations
+        r"C:\ffmpeg\bin",
+        r"C:\Program Files\ffmpeg\bin",
+        r"C:\Program Files (x86)\ffmpeg\bin",
+        os.path.join(home, r"ffmpeg\bin"),
+        os.path.join(home, r"Downloads\ffmpeg\bin"),
+        os.path.join(home, r"Desktop\ffmpeg\bin"),
+    ]
+
+    for search_dir in search_paths:
+        if not os.path.exists(search_dir):
+            continue
+        # Direct check
+        exe_path = os.path.join(search_dir, "ffmpeg.exe")
+        if os.path.isfile(exe_path):
+            return exe_path
+        # Recursive glob (1 level deep for WinGet-style nested packages)
+        matches = glob.glob(os.path.join(search_dir, "**/ffmpeg.exe"), recursive=True)
+        if matches:
+            return matches[0]
+
+    return ""
+
+
+def is_ffmpeg_available(ffmpeg_path=None):
+    """Tests if a given ffmpeg path (or the saved setting) actually works."""
+    if ffmpeg_path is None:
+        ffmpeg_path = get_setting("ffmpeg_path", "")
+    if not ffmpeg_path:
+        return False
+    try:
+        startupinfo = None
+        if os.name == 'nt':
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        result = subprocess.run(
+            [ffmpeg_path, "-version"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            startupinfo=startupinfo, timeout=10
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
 
 def initialize_settings():
     """Detects paths if empty and populates settings table with defaults."""

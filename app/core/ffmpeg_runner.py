@@ -1,7 +1,7 @@
 import os
 import subprocess
 import glob
-from app.core.settings_service import get_setting
+from app.core.settings_service import get_setting, is_ffmpeg_available
 import app.core.log_service as log_service
 
 def compile_video(image_pattern, output_path, fps=24, fps_base=1):
@@ -11,6 +11,10 @@ def compile_video(image_pattern, output_path, fps=24, fps_base=1):
                    or "C:\\renders\\Cam_A\\%04d.png" (FFmpeg style)
     """
     ffmpeg_bin = get_setting("ffmpeg_path", "ffmpeg")
+    
+    if not is_ffmpeg_available(ffmpeg_bin):
+        log_service.warning("FFmpeg no está disponible. Saltando compilación de video.")
+        return False, "FFmpeg no está instalado o no se encontró en la ruta configurada."
     
     # Resolve Blender style '####' to FFmpeg style '%04d'
     # Blender output often has '####' in the pattern
@@ -66,6 +70,10 @@ def generate_thumbnail(image_path, output_path, width=320):
     This runs instantly and does not require PIL/Pillow.
     """
     ffmpeg_bin = get_setting("ffmpeg_path", "ffmpeg")
+    
+    if not is_ffmpeg_available(ffmpeg_bin):
+        return False
+    
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     
     cmd = [
