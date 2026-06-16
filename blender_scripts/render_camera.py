@@ -2,8 +2,46 @@ import bpy
 import sys
 import argparse
 import os
+import time
+import json
+import re
+
+def emit_event(event_type, **payload):
+    payload["type"] = event_type
+    payload["timestamp"] = time.time()
+    print("IPBT_EVENT " + json.dumps(payload, ensure_ascii=False), flush=True)
+
+# Global args to reference inside handlers
+render_args = None
+
+@bpy.app.handlers.persistent
+def on_render_pre(scene):
+    emit_event("frame_started", phase="render", frame=scene.frame_current)
+
+@bpy.app.handlers.persistent
+def on_render_write(scene):
+    total = 1
+    if render_args:
+        total = render_args.frame_end - render_args.frame_start + 1
+    frame_idx = scene.frame_current
+    if render_args:
+        frame_idx = scene.frame_current - render_args.frame_start + 1
+    emit_event("frame_done", phase="render", frame=frame_idx, total_frames=total, output=scene.render.filepath)
+
+@bpy.app.handlers.persistent
+def on_render_stats(scene):
+    stats_str = scene.render.stats
+    m = re.search(r"Sample\s+(\d+)\s*/\s*(\d+)", stats_str)
+    if m:
+        current_sample = int(m.group(1))
+        total_samples = int(m.group(2))
+        emit_event("progress_update", phase="render", current=current_sample, total=total_samples, stats=stats_str)
+
+# Notify launch immediately when python script starts executing
+emit_event("job_started", phase="launch", message="Blender iniciado")
 
 def parse_args():
+    global render_args
     # Find '--' in argv and parse arguments after it
     if "--" in sys.argv:
         args_list = sys.argv[sys.argv.index("--") + 1:]
@@ -21,7 +59,9 @@ def parse_args():
     parser.add_argument("--frame-end", type=int, default=1, help="End frame.")
     parser.add_argument("--is-animation", action="store_true", help="Render as animation instead of single frame.")
     
-    return parser.parse_args(args_list)
+    parsed = parser.parse_args(args_list)
+    render_args = parsed
+    return parsed
 
 def configure_cycles_device(device_mode):
     """Configures GPU/CPU rendering for Cycles."""
@@ -106,6 +146,8 @@ def apply_profile(profile_name, engine):
 
 def render():
     args = parse_args()
+    emit_event("blend_loaded", phase="load", message=f"Archivo .blend cargado: {os.path.basename(bpy.data.filepath)}")
+    
     scene = bpy.context.scene
     
     # 1. Set active camera
@@ -113,11 +155,10 @@ def render():
         scene.camera = bpy.data.objects[args.camera]
         print(f"Setting active camera to: {args.camera}")
     else:
-        print(f"Error: Camera '{args.camera}' not found in blend file!")
+        emit_event("error", code="CAMERA_NOT_FOUND", message=f"No se encontró la cámara '{args.camera}' en la escena.")
         sys.exit(1)
         
     # 2. Configure output path and format
-    # Force output directory exists
     out_dir = os.path.dirname(args.output)
     os.makedirs(out_dir, exist_ok=True)
     
@@ -134,13 +175,11 @@ def render():
         
     # 3. Configure Resolution percentage
     scene.render.resolution_percentage = args.res_pct
-    print(f"Resolution percentage: {args.res_pct}%")
     
     # 4. Configure Engine
     if args.engine:
         scene.render.engine = args.engine
     engine = scene.render.engine
-    print(f"Render engine: {engine}")
     
     # 5. Configure Device
     if engine == 'CYCLES':
@@ -153,16 +192,27 @@ def render():
     scene.frame_start = args.frame_start
     scene.frame_end = args.frame_end
     
+    emit_event("scene_prepared", phase="prepare", message="Escena preparada correctamente")
+    
+    # Register handlers
+    bpy.app.handlers.render_pre.append(on_render_pre)
+    bpy.app.handlers.render_write.append(on_render_write)
+    bpy.app.handlers.render_stats.append(on_render_stats)
+    
     # 8. Start render
+    emit_event("render_started", phase="render", message="Iniciando renderizado...")
     print("---RENDER_START---")
+    
     if args.is_animation:
-        # For animations, we let Blender handle the frame range
         bpy.ops.render.render(animation=True, write_still=True)
     else:
-        # For still frames, we render the current frame
         scene.frame_current = args.frame_start
         bpy.ops.render.render(write_still=True)
+        
     print("---RENDER_END---")
+    
+    emit_event("render_saved", phase="save", message=f"Archivo guardado: {os.path.basename(args.output)}")
+    emit_event("job_completed", phase="complete", message="Render completado con éxito")
 
 if __name__ == "__main__":
     render()

@@ -97,7 +97,7 @@ class RenderQueue(QThread):
         conn.close()
         return row
 
-    def _update_job_status(self, job_id, status, error_summary=None, output_file=None, start_time=None, finish_time=None, duration=None):
+    def _update_job_status(self, job_id, status, error_summary=None, output_file=None, start_time=None, finish_time=None, duration=None, log_file=None):
         conn = get_db_connection()
         cursor = conn.cursor()
         
@@ -110,6 +110,9 @@ class RenderQueue(QThread):
         if output_file is not None:
             updates.append("output_file = ?")
             params.append(output_file)
+        if log_file is not None:
+            updates.append("log_file = ?")
+            params.append(log_file)
         if start_time is not None:
             updates.append("started_at = ?")
             params.append(start_time)
@@ -231,7 +234,8 @@ class RenderQueue(QThread):
         render_path, secondary_path, version_str = self._resolve_paths(job)
         
         # Initialize Runner
-        self.current_runner = BlenderRunner(project_code)
+        self.current_runner = BlenderRunner(project_code, job_id, camera_name)
+        self._update_job_status(job_id, "Running", log_file=self.current_runner.log_path)
         
         # Connect runner logs and progress to queue signals
         self.current_runner.log_received.connect(lambda line: self.job_log.emit(job_id, line))
@@ -309,7 +313,7 @@ class RenderQueue(QThread):
                 self.job_started.emit(job_id, f"Montando imagen: {camera_name}")
                 log_service.info(f"Iniciando render de montaje final usando: {montage_blend}", project_code)
                 
-                self.current_runner = BlenderRunner(project_code)
+                self.current_runner = BlenderRunner(project_code, job_id, camera_name + "_montaje")
                 self.current_runner.log_received.connect(lambda line: self.job_log.emit(job_id, line))
                 self.current_runner.progress_changed.connect(lambda pct: self.job_progress.emit(job_id, 50 + int(pct/2))) # scaled 50-100%
                 

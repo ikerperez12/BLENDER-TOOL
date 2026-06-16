@@ -2,8 +2,16 @@ import bpy
 import json
 import os
 import sys
+import time
+
+def emit_event(event_type, **payload):
+    payload["type"] = event_type
+    payload["timestamp"] = time.time()
+    print("IPBT_EVENT " + json.dumps(payload, ensure_ascii=False), flush=True)
 
 def scan():
+    emit_event("job_started", phase="launch", message="Iniciando escaneo de escena...")
+    
     # Gather cameras
     cameras = []
     active_cam = bpy.context.scene.camera
@@ -17,6 +25,8 @@ def scan():
     # Render settings
     scene = bpy.context.scene
     render = scene.render
+    
+    emit_event("blend_loaded", phase="load", message=f"Archivo .blend cargado: {os.path.basename(bpy.data.filepath)}")
 
     # Check for missing textures/assets
     missing_assets = []
@@ -52,6 +62,8 @@ def scan():
     print("---SCAN_RESULT_START---")
     print(json.dumps(metadata, indent=2))
     print("---SCAN_RESULT_END---")
+    
+    emit_event("job_completed", phase="complete", message="Escaneo completado")
 
 if __name__ == "__main__":
     scan()

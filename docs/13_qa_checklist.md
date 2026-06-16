@@ -14,6 +14,9 @@ Cualquier fallo en los siguientes puntos bloquea de forma inmediata e incondicio
 * **Estados Engañosos**: Un renderizado fallido (debido a falta de VRAM, texturas ausentes, etc.) se marca como `Completed` en lugar de `Failed`.
 * **Fuga de Secretos**: El ZIP de diagnóstico exportado contiene tokens de Telegram o webhooks de Discord en texto plano sin redactar.
 * **Pérdida de Datos**: La desinstalación del programa borra de forma destructiva las carpetas de renders configuradas por el usuario.
+* **Progreso Simulado**: El progreso de la barra en renders reales avanza sin una métrica física verídica (porcentaje inventado por temporizador).
+* **Consola Saturada**: La UI muestra el flujo sin procesar completo de Blender (ej. spam de muestras de renderizado o inicialización) saturando la memoria o la vista.
+* **Falta de Logs Físicos**: Las ejecuciones de Blender no guardan su salida técnica (`stdout`/`stderr` raw) completa en un archivo `.log` en el disco.
 
 ---
 
@@ -44,6 +47,13 @@ Cualquier fallo en los siguientes puntos bloquea de forma inmediata e incondicio
 - [ ] **Verificación de salida real**: Tras finalizar un render, verificar que el archivo final existe en el disco y tiene un tamaño mayor a 0 bytes antes de marcarse como `Completed`.
 - [ ] **Fallo controlado**: Forzar un render fallido (por ejemplo, renombrando una cámara temporalmente). Verificar que la tarea encola reintentos y finalmente cambia su estado a `Failed`.
 - [ ] **Cancelación Segura**: Cancelar un trabajo en curso. Comprobar que el proceso secundario de Blender se detiene instantáneamente y no queda ningún subproceso huérfano en ejecución.
+- [ ] **Progreso de Animaciones**: Comprobar que el progreso de una animación avanza estrictamente por frames reales completados.
+- [ ] **Progreso de Stills / Fijos**: Comprobar que un render fijo sin progreso de Cycles (o que use Eevee) muestra una barra indeterminada en la UI.
+- [ ] **Consola Visual Limpia**: Verificar que la consola en la UI no muestra spam repetitivo de Cycles ("Sample X/Y") ni volcado de datos inicial.
+- [ ] **Persistencia de Logs Raw**: Validar que la salida completa y sin filtros de Blender queda guardada en `%APPDATA%\IP Blender Tool\logs\job_[job_id]_[camera].log`.
+- [ ] **Botón Ver Log Completo**: Validar que el botón abre el log raw del trabajo seleccionado en Notepad.
+- [ ] **Botón Copiar Error**: Forzar un error y validar que al hacer clic en el botón se copia el sumario correcto al portapapeles.
+- [ ] **Modo Simulado Aislado**: Validar que el avance simulado de progreso no existe en trabajos reales, y que el modo demo simulado se ejecuta exclusivamente en el proyecto `0000`.
 
 ### 5. Herramientas de Diagnóstico y Demo
 - [ ] **Ejecutar Checks**: Ejecutar el preflight desde la barra lateral y confirmar que todos los tests (Blender, FFmpeg, base de datos) pasan.

@@ -6,6 +6,13 @@ from PySide6.QtCore import QObject, Signal
 import app.core.log_service as log_service
 from app.core.settings_service import get_setting, get_base_dir
 
+def safe_filename(name):
+    if not name:
+        return "unknown"
+    # Replace invalid chars: \ / : * ? " < > |
+    import re
+    return re.sub(r'[\s\\/:*?"<>|]', '_', name)
+
 class BlenderRunner(QObject):
     # Signals for UI communication
     log_received = Signal(str)
@@ -13,9 +20,22 @@ class BlenderRunner(QObject):
     status_message = Signal(str)
     finished = Signal(int, str)  # return_code, error_summary
 
-    def __init__(self, project_code=None):
+    def __init__(self, project_code, job_id, camera_name, job_type=None, log_path=None):
         super().__init__()
         self.project_code = project_code
+        self.job_id = job_id
+        self.camera_name = camera_name
+        self.job_type = job_type
+        
+        # Sanitise camera_name for log path
+        safe_cam = safe_filename(camera_name)
+        
+        if log_path:
+            self.log_path = log_path
+        else:
+            log_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "IP Blender Tool", "logs")
+            self.log_path = os.path.join(log_dir, f"job_{job_id}_{safe_cam}.log")
+            
         self.process = None
         self.is_cancelled = False
 
@@ -162,6 +182,7 @@ class BlenderRunner(QObject):
         self._execute_blender(args, frame_mode=False, is_montage=True)
 
     def _execute_blender(self, args, frame_mode=False, frame_start=1, frame_end=1, is_montage=False):
+        import json
         self.is_cancelled = False
         
         # Check if we should run in Mock Mode (for demo project "0000" if Blender is not configured/found)
@@ -175,11 +196,9 @@ class BlenderRunner(QObject):
             
         log_service.info(f"Ejecutando comando: {' '.join(args)}", self.project_code)
         
-        # Regex patterns for progress parsing
-        # Cycles rendering samples: e.g. "Sample 120/512" or "Rendering 120 / 512 samples"
-        cycles_sample_pat = re.compile(r"(?:Sample|Rendering)\s+(\d+)\s*/\s*(\d+)")
-        # Eevee frame logging: e.g. "Fra:5" or "Frame 5"
-        fra_pat = re.compile(r"Fra:(\d+)")
+        # Ensure log directory exists
+        log_file_path = self.log_path
+        os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
 
         startupinfo = None
         if os.name == 'nt':
@@ -199,44 +218,100 @@ class BlenderRunner(QObject):
             
             error_lines = []
             
-            # Read stdout line by line
-            while True:
-                line = self.process.stdout.readline()
-                if not line:
-                    break
-                
-                line_str = line.strip()
-                if not line_str:
-                    continue
-                
-                # Emit to UI
-                self.log_received.emit(line_str)
-                log_service.info(line_str, self.project_code)
-                
-                # Capture potential critical errors
-                if any(err in line_str.upper() for err in ["OUT OF MEMORY", "CUDA ERROR", "OPTIX ERROR", "MISSING TEXTURES", "PERMISSION DENIED"]):
-                    error_lines.append(line_str)
-
-                # Parse progress
-                # 1. Cycles samples progress
-                cycles_match = cycles_sample_pat.search(line_str)
-                if cycles_match:
-                    curr, total = int(cycles_match.group(1)), int(cycles_match.group(2))
-                    if total > 0:
-                        pct = int(95.0 * curr / total)  # reserve 5% for saving/compositing
-                        self.progress_changed.emit(pct)
-                
-                # 2. Animation frames progress
-                elif frame_mode and frame_end > frame_start:
-                    fra_match = fra_pat.search(line_str)
-                    if fra_match:
-                        curr_frame = int(fra_match.group(1))
-                        total_frames = frame_end - frame_start + 1
-                        completed = curr_frame - frame_start
-                        pct = int(100.0 * completed / total_frames)
-                        pct = max(0, min(100, pct))
-                        self.progress_changed.emit(pct)
-            
+            # Open the raw log file in write mode
+            with open(log_file_path, "w", encoding="utf-8", errors="ignore") as log_file:
+                while True:
+                    line = self.process.stdout.readline()
+                    if not line:
+                        break
+                    
+                    # Write to raw log file synchronously
+                    log_file.write(line)
+                    log_file.flush()
+                    
+                    line_str = line.strip()
+                    if not line_str:
+                        continue
+                    
+                    # Log service backup
+                    log_service.info(line_str, self.project_code)
+                    
+                    # Check if line is an IPBT_EVENT
+                    if line_str.startswith("IPBT_EVENT "):
+                        try:
+                            event_data = json.loads(line_str[11:])
+                            ev_type = event_data.get("type")
+                            phase = event_data.get("phase")
+                            ev_msg = event_data.get("message")
+                            
+                            # Emit message to UI if present
+                            if ev_msg:
+                                self.status_message.emit(ev_msg)
+                                
+                            # Segregate logs based on severity / type
+                            if ev_type == "error":
+                                err_msg = f"[ERROR] {event_data.get('code', 'RENDER_ERROR')}: {ev_msg}"
+                                self.log_received.emit(err_msg)
+                                error_lines.append(err_msg)
+                            elif ev_type == "warning":
+                                self.log_received.emit(f"[ADVERTENCIA] {ev_msg}")
+                            elif ev_type in ["job_started", "blend_loaded", "scene_prepared", "render_started", "render_saved", "compositor_started", "compositor_image_replaced", "compositor_saved", "job_completed"]:
+                                if ev_msg:
+                                    self.log_received.emit(f"[INFO] {ev_msg}")
+                            
+                            # Calculate real progress percentages based on events
+                            if frame_mode:  # ANIMATION: base on completed physical frames
+                                if ev_type == "frame_done":
+                                    completed = event_data.get("frame", 0)
+                                    total = event_data.get("total_frames", 1)
+                                    if total > 0:
+                                        pct = int(100.0 * completed / total)
+                                        pct = max(0, min(100, pct))
+                                        self.progress_changed.emit(pct)
+                                elif ev_type == "job_started":
+                                    self.progress_changed.emit(0)
+                            else:  # STILL RENDER or MONTAGE
+                                if phase == "launch":
+                                    self.progress_changed.emit(0)
+                                elif phase == "load":
+                                    self.progress_changed.emit(5)
+                                elif phase == "prepare":
+                                    self.progress_changed.emit(10)
+                                elif phase == "render":
+                                    if ev_type == "progress_update":
+                                        # Cycles samples update
+                                        curr = event_data.get("current", 0)
+                                        total = event_data.get("total", 0)
+                                        if total > 0:
+                                            pct = int(10.0 + 85.0 * curr / total)
+                                            pct = max(10, min(95, pct))
+                                            self.progress_changed.emit(pct)
+                                    elif ev_type in ["render_started", "frame_started"]:
+                                        # Set to indeterminate state (-1) if we just started render
+                                        # It will stay indeterminate unless Cycles progress_update starts coming
+                                        self.progress_changed.emit(-1)
+                                elif phase == "save":
+                                    self.progress_changed.emit(95)
+                                elif phase == "complete" or ev_type == "job_completed":
+                                    self.progress_changed.emit(100)
+                                    
+                        except Exception as parse_err:
+                            log_service.error(f"Error parsing IPBT_EVENT: {parse_err}", self.project_code)
+                    else:
+                        # Non-event line: show only warnings and errors in UI console
+                        upper_line = line_str.upper()
+                        # Capture potential critical system errors
+                        if any(err in upper_line for err in ["OUT OF MEMORY", "CUDA ERROR", "OPTIX ERROR", "MISSING TEXTURES", "PERMISSION DENIED"]):
+                            error_lines.append(line_str)
+                            self.log_received.emit(line_str)
+                        else:
+                            # Filter standard output to only display warnings, errors, or exceptions
+                            is_important = any(kw in upper_line for kw in ["ERROR", "WARNING", "EXCEPTION", "FAIL", "FATAL"])
+                            # Make sure we don't spam sample or frame logs
+                            is_spam = any(kw in upper_line for kw in ["SAMPLE", "RENDERING", "FRA:"])
+                            if is_important and not is_spam:
+                                self.log_received.emit(line_str)
+                                
             self.process.wait()
             return_code = self.process.returncode
             

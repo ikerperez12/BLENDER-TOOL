@@ -102,6 +102,7 @@ def init_db():
         duration_seconds REAL,
         output_file TEXT,
         error_summary TEXT,
+        log_file TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (project_id) REFERENCES projects(id),
         FOREIGN KEY (snapshot_id) REFERENCES snapshots(id)
@@ -111,6 +112,13 @@ def init_db():
     # Run migration for existing databases for jobs.blend_path
     try:
         cursor.execute("ALTER TABLE jobs ADD COLUMN blend_path TEXT")
+    except sqlite3.OperationalError:
+        # Column already exists
+        pass
+
+    # Run migration for existing databases for jobs.log_file
+    try:
+        cursor.execute("ALTER TABLE jobs ADD COLUMN log_file TEXT")
     except sqlite3.OperationalError:
         # Column already exists
         pass

@@ -46,3 +46,28 @@ To ensure the user interface remains completely fluid during long rendering sess
 - Consumes a FIFO thread-safe queue.
 - Dispatches HTTP requests using connection poolings.
 - Has a strict 5-second timeout to isolate rendering operations from network latency.
+
+---
+
+## 🪵 Progress & Logging Pipeline
+
+To achieve clean visual logs and honest progress tracking, the application employs a three-tier pipeline:
+
+```mermaid
+graph TD
+    Sub["Blender Subprocess Stdout"] -->|Raw line| Runner["blender_runner.py"]
+    Runner -->|1. Write Raw| FileLog["job_ID_camera.log in %APPDATA%"]
+    Runner -->|2. Parse event if IPBT_EVENT| EvParse["Event Processor"]
+    Runner -->|3. Filter if technical line| Filter["Spam Filter"]
+    EvParse -->|Update progress % / -1| UIProgress["UI Progress Bar"]
+    EvParse -->|Emit Info/Warning/Error| UIConsole["UI Console Window"]
+    Filter -->|If Warning/Error/Exception| UIConsole
+```
+
+### 1. Structured events
+Subprocesses emit `IPBT_EVENT {json}` lines. The runner decodes these JSON strings to obtain precise status updates and physical rendering metrics (e.g. Cycles samples, frame indices, preparation phase markers) rather than faking progress.
+
+### 2. Log Segregation
+- **Raw logs**: Saved in `%APPDATA%/IP Blender Tool/logs/job_[job_id]_[camera].log` for deep diagnostic inspection.
+- **UI console logs**: Filtered to show only important milestones (preflight status, startup, compositor swaps) and warning/error details. Technical Cycles samples and frame metrics are excluded to keep the console clean.
+- **Log rotation**: The UI console is limited to the last 500 lines using `setMaximumBlockCount` to prevent memory leaks during long-running tasks.

@@ -27,7 +27,7 @@ def run_preflight_checks():
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             r = subprocess.run(
-                [blender_bin, "--version"],
+                [blender_bin, "-b", "-v"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,

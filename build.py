@@ -4,6 +4,8 @@ import sys
 import shutil
 import hashlib
 
+VERSION = "1.0.0-rc1"
+
 def find_iscc():
     """Tries to find the Inno Setup compiler (ISCC.exe)."""
     # 1. Check if 'iscc' is in the system PATH
@@ -91,18 +93,18 @@ def generate_checksum(file_path):
         return None
 
 def organize_release():
-    """Organizes compiled outputs into releases/1.0.0/ folder."""
-    print("Organizando archivos de lanzamiento en releases/1.0.0/...")
-    src_installer = os.path.join("releases", "IP-Blender-Tool-Setup-1.0.0.exe")
+    """Organizes compiled outputs into releases/[version]/ folder."""
+    print(f"Organizando archivos de lanzamiento en releases/{VERSION}/...")
+    src_installer = os.path.join("releases", f"IP-Blender-Tool-Setup-{VERSION}.exe")
     if not os.path.exists(src_installer):
         print(f"ERROR: No se encontró el instalador en: {src_installer}")
         return False
         
-    dest_dir = os.path.join("releases", "1.0.0")
+    dest_dir = os.path.join("releases", VERSION)
     os.makedirs(dest_dir, exist_ok=True)
     
     # 1. Move Installer
-    dest_installer = os.path.join(dest_dir, "IP-Blender-Tool-Setup-1.0.0.exe")
+    dest_installer = os.path.join(dest_dir, f"IP-Blender-Tool-Setup-{VERSION}.exe")
     try:
         shutil.move(src_installer, dest_installer)
         print(f"  Instalador movido a: {dest_installer}")
@@ -125,12 +127,12 @@ def organize_release():
     notes_src = os.path.join("release_notes", "v1.0.0.md")
     if os.path.exists(notes_src):
         try:
-            shutil.copy(notes_src, os.path.join(dest_dir, "release_notes_v1.0.0.md"))
-            print("  Notas de lanzamiento copiadas a la carpeta de release.")
+            shutil.copy(notes_src, os.path.join(dest_dir, f"release_notes_v{VERSION}.md"))
+            print(f"  Notas de lanzamiento copiadas a la carpeta de release como release_notes_v{VERSION}.md.")
         except Exception as e:
             print(f"  Advertencia: No se pudo copiar notas de lanzamiento: {e}")
             
-    print("SUCCESS: Carpeta de release 1.0.0 organizada con éxito.")
+    print(f"SUCCESS: Carpeta de release {VERSION} organizada con éxito.")
     return True
 
 def main():

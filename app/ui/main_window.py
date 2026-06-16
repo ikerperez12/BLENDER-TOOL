@@ -685,11 +685,33 @@ class MainWindow(QMainWindow):
         self.console_toggle_btn.clicked.connect(self.toggle_console_visibility)
         console_layout.addWidget(self.console_toggle_btn)
         
+        # Create a container for console box and control buttons
+        self.console_details_widget = QWidget()
+        self.console_details_widget.setVisible(False)
+        details_layout = QVBoxLayout(self.console_details_widget)
+        details_layout.setContentsMargins(0, 0, 0, 0)
+        details_layout.setSpacing(5)
+
         self.console_box = QTextEdit()
         self.console_box.setObjectName("consoleBox")
         self.console_box.setReadOnly(True)
-        self.console_box.setVisible(False)
-        console_layout.addWidget(self.console_box)
+        # Limit text document block count to 500 lines to prevent memory growth
+        self.console_box.document().setMaximumBlockCount(500)
+        details_layout.addWidget(self.console_box)
+
+        # Buttons layout
+        console_btn_layout = QHBoxLayout()
+        self.view_full_log_btn = QPushButton("📂 Ver log completo")
+        self.view_full_log_btn.clicked.connect(self.open_current_job_log_file)
+        self.copy_error_btn = QPushButton("📋 Copiar error")
+        self.copy_error_btn.clicked.connect(self.copy_last_error_to_clipboard)
+        
+        console_btn_layout.addWidget(self.view_full_log_btn)
+        console_btn_layout.addWidget(self.copy_error_btn)
+        console_btn_layout.addStretch()
+        details_layout.addLayout(console_btn_layout)
+
+        console_layout.addWidget(self.console_details_widget)
         
         right_layout.addWidget(console_frame)
         
@@ -727,8 +749,8 @@ class MainWindow(QMainWindow):
             set_setting("shutdown_on_complete", "none")
 
     def toggle_console_visibility(self):
-        is_visible = self.console_box.isVisible()
-        self.console_box.setVisible(not is_visible)
+        is_visible = self.console_details_widget.isVisible()
+        self.console_details_widget.setVisible(not is_visible)
         if is_visible:
             self.console_toggle_btn.setText("▼ Mostrar Consola Técnica")
         else:
@@ -745,6 +767,96 @@ class MainWindow(QMainWindow):
         # Keep buffer size reasonable
         cursor = self.console_box.textCursor()
         self.console_box.moveCursor(cursor.End)
+
+    def get_selected_job_id(self):
+        # 1. First, check if there is an active running job in the queue thread
+        if hasattr(self, "queue_thread") and self.queue_thread.isRunning() and self.queue_thread.current_job_id:
+            return self.queue_thread.current_job_id
+            
+        # 2. Otherwise, check the selected row in the table
+        selected_ranges = self.queue_table.selectedRanges()
+        if selected_ranges:
+            row = selected_ranges[0].topRow()
+            item = self.queue_table.item(row, 0)
+            if item:
+                return item.data(Qt.UserRole)
+                
+        # 3. Fallback: if there are rows in the table, return the first one or None
+        if self.queue_table.rowCount() > 0:
+            item = self.queue_table.item(0, 0)
+            if item:
+                return item.data(Qt.UserRole)
+                
+        return None
+
+    def open_current_job_log_file(self):
+        job_id = self.get_selected_job_id()
+        if not job_id:
+            QMessageBox.information(self, "Sin Selección", "No hay ningún trabajo seleccionado o en curso para ver su log.")
+            return
+            
+        # Get details from database
+        conn = get_db_connection()
+        row = conn.execute("SELECT camera_name, log_file FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        conn.close()
+        
+        if not row:
+            QMessageBox.warning(self, "Error", "No se encontró el trabajo en la base de datos.")
+            return
+            
+        log_file_path = row["log_file"]
+        
+        # Fallback if log_file is not stored in database
+        if not log_file_path:
+            camera_name = row["camera_name"] or "Timeline"
+            from app.core.blender_runner import safe_filename
+            safe_cam = safe_filename(camera_name)
+            log_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "IP Blender Tool", "logs")
+            log_file_path = os.path.join(log_dir, f"job_{job_id}_{safe_cam}.log")
+            
+            # Alternative fallback for old montages
+            if not os.path.exists(log_file_path):
+                alt_path = os.path.join(log_dir, f"job_{job_id}_{safe_cam}_montaje.log")
+                if os.path.exists(alt_path):
+                    log_file_path = alt_path
+        
+        # Check if the file exists
+        if not os.path.exists(log_file_path):
+            QMessageBox.information(
+                self, "Log No Encontrado", 
+                f"El archivo de log para este trabajo no existe en el disco:\n{log_file_path}\n\n"
+                "Es posible que el trabajo aún no se haya ejecutado o el archivo fuera eliminado."
+            )
+            return
+                
+        # Open in default system editor
+        try:
+            os.startfile(log_file_path)
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"No se pudo abrir el archivo de log: {e}")
+
+    def copy_last_error_to_clipboard(self):
+        job_id = self.get_selected_job_id()
+        if not job_id:
+            QMessageBox.information(self, "Sin Selección", "No hay ningún trabajo seleccionado para copiar su error.")
+            return
+            
+        conn = get_db_connection()
+        row = conn.execute("SELECT error_summary, camera_name FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        conn.close()
+        
+        if not row:
+            QMessageBox.warning(self, "Error", "No se encontró el trabajo en la base de datos.")
+            return
+            
+        err = row["error_summary"]
+        if not err:
+            QMessageBox.information(self, "Sin Errores", f"El trabajo de la cámara '{row['camera_name']}' no registró ningún error.")
+            return
+            
+        clipboard = QApplication.clipboard()
+        clipboard.setText(err)
+        QMessageBox.information(self, "Copiado", f"Se copió el detalle del error al portapapeles:\n\n\"{err}\"")
 
     def browse_manual_folder(self):
         projects_root = get_setting("projects_root")
@@ -1079,7 +1191,9 @@ class MainWindow(QMainWindow):
         for i, row in enumerate(rows):
             self.queue_table.insertRow(i)
             
-            self.queue_table.setItem(i, 0, QTableWidgetItem(row["project_code"]))
+            project_item = QTableWidgetItem(row["project_code"])
+            project_item.setData(Qt.UserRole, row["id"])
+            self.queue_table.setItem(i, 0, project_item)
             self.queue_table.setItem(i, 1, QTableWidgetItem(row["camera_name"] or "Timeline"))
             self.queue_table.setItem(i, 2, QTableWidgetItem(row["profile"]))
             self.queue_table.setItem(i, 3, QTableWidgetItem(f"{row['resolution_percent']}%"))
@@ -1130,13 +1244,23 @@ class MainWindow(QMainWindow):
     @Slot(int, str)
     def on_job_started(self, job_id, label):
         self.refresh_queue_table()
+        self.queue_progress.setRange(0, 100)
         self.queue_progress.setVisible(True)
         self.queue_progress.setValue(0)
         self.queue_progress.setFormat(f"{label}: %p%")
+        self._current_label = label
 
     @Slot(int, int)
     def on_job_progress(self, job_id, percent):
-        self.queue_progress.setValue(percent)
+        if percent == -1:
+            self.queue_progress.setRange(0, 0)
+            label = getattr(self, "_current_label", "Trabajo")
+            self.queue_progress.setFormat(f"{label}: Procesando...")
+        else:
+            self.queue_progress.setRange(0, 100)
+            self.queue_progress.setValue(percent)
+            label = getattr(self, "_current_label", "Trabajo")
+            self.queue_progress.setFormat(f"{label}: %p%")
 
     @Slot(int, str)
     def on_job_log(self, job_id, line):

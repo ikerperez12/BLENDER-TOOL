@@ -47,7 +47,7 @@ El asistente está estructurado como un diálogo paso a paso que consta de 4 pá
 * **Controles de la interfaz**:
   - Botón **Probar Configuración**.
   - Indicadores de progreso y estado que comprueban:
-    1. Ejecución de Blender: Intenta obtener la versión (`blender.exe -v`).
+    1. Ejecución de Blender: Intenta obtener la versión (`blender.exe -b -v`).
     2. Permisos de escritura en la carpeta de proyectos.
     3. Permisos de escritura en la carpeta de renders.
   - Botón **Finalizar** (solo se habilitará si todas las pruebas del test se completan con éxito).
